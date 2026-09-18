@@ -1,0 +1,74 @@
+{
+  "provider": "obsidian",
+  "connection_id": "fixture-obsidian-vault",
+  "snapshots": [
+    {
+      "source": {
+        "provider": "obsidian",
+        "account_id": "vault-fixture",
+        "external_id": "Projects/Aidebook/Release.md",
+        "url": "obsidian://open?vault=fixture&file=Projects%2FAidebook%2FRelease.md",
+        "kind": "note"
+      },
+      "title": "Aidebook release checklist",
+      "body": "Release validation waits for the native smoke test. See https://github.com/yoonhoGo/aidebook/issues/42.",
+      "source_updated_at": "2026-09-18T08:55:00Z",
+      "fetched_at": "2026-09-18T09:00:00Z",
+      "content_hash": "",
+      "access_status": "accessible",
+      "unavailable_reason": null,
+      "is_deleted": false
+    },
+    {
+      "source": {
+        "provider": "obsidian",
+        "account_id": "vault-fixture",
+        "external_id": "Projects/Aidebook/Release.md",
+        "url": "obsidian://open?vault=fixture&file=Projects%2FAidebook%2FRelease.md",
+        "kind": "note"
+      },
+      "title": "Aidebook release checklist",
+      "body": "Release validation waits for the native smoke test. See https://github.com/yoonhoGo/aidebook/issues/42.",
+      "source_updated_at": "2026-09-18T08:55:00Z",
+      "fetched_at": "2026-09-18T09:00:00Z",
+      "content_hash": "",
+      "access_status": "accessible",
+      "unavailable_reason": null,
+      "is_deleted": false
+    },
+    {
+      "source": {
+        "provider": "obsidian",
+        "account_id": "vault-fixture",
+        "external_id": "Projects/Aidebook/Unloaded.md",
+        "url": "obsidian://open?vault=fixture&file=Projects%2FAidebook%2FUnloaded.md",
+        "kind": "note"
+      },
+      "title": "Unloaded note",
+      "body": "",
+      "source_updated_at": null,
+      "fetched_at": "2026-09-18T09:01:00Z",
+      "content_hash": "",
+      "access_status": "unavailable",
+      "unavailable_reason": "iCloud placeholder is not downloaded",
+      "is_deleted": false
+    },
+    {
+      "source": {
+        "provider": "obsidian",
+        "account_id": "vault-fixture",
+        "external_id": "Projects/Aidebook/Private.md",
+        "url": "obsidian://open?vault=fixture&file=Projects%2FAidebook%2FPrivate.md",
+        "kind": "note"
+      },
+      "title": "Private note",
+      "body": "",
+      "source_updated_at": null,
+      "fetched_at": "2026-09-18T09:02:00Z",
+      "content_hash": "",
+      "access_status": "permission_denied",
+      "unavailable_reason": "fixture permission denied",
+      "is_deleted": false
+    }
+  ]
+}

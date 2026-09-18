@@ -1,4 +1,4 @@
-mod core;
+pub mod core;
 
 // This command is intentionally small: it proves the UI-to-core boundary
 // without pretending that persistence or connector integrations exist yet.

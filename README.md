@@ -11,8 +11,9 @@ user-reviewable in-app memories.
 
 - `src/` — React and TypeScript desktop UI.
 - `src-tauri/` — Tauri 2 host and Rust application core.
-- `src-tauri/src/core/` — the first shared-core boundary; persistence,
-  connector adapters, CLI, and MCP will build on this boundary.
+- `src-tauri/src/core/` — the shared Rust core boundary. M0 includes SQLite,
+  FTS5, versioned local memories, sync state, and read-only fixture adapters;
+  future connector adapters, CLI, and MCP will build on this boundary.
 
 The first UI slice mirrors the planned focus: work contexts on the left,
 memory and activity in the centre, and source evidence on the right. Work
@@ -33,7 +34,9 @@ Validation commands:
 
 ```sh
 npm run build
+cargo test --manifest-path src-tauri/Cargo.toml
 cargo check --manifest-path src-tauri/Cargo.toml
+git diff --check
 ```
 
 This repository uses [Jujutsu](https://martinvonz.github.io/jj/) colocated
@@ -42,7 +45,11 @@ with Git. Use `jj status`, `jj diff`, and `jj log` for change management.
 ## Scope notes
 
 The product plan is kept in the Obsidian vault as `비서의 노트 기획서.md`.
-The current implementation intentionally leaves external writes, remote
-webhook infrastructure, provider credentials, and native SQLite persistence
-out of the project. GitHub and Obsidian content in the UI is clearly marked as
-cached example data until read-only adapters are added.
+M0 now provides a local SQLite/FTS5 core and deterministic read-only Obsidian
+and GitHub fixtures. The React UI intentionally keeps its existing
+`localStorage` persistence until a later migration is designed. External
+writes, remote webhook infrastructure, provider credentials, real vault/account
+access, CLI/MCP processes, and native app wiring remain out of M0. See
+[`docs/CORE_CONTRACT.md`](docs/CORE_CONTRACT.md) and
+[`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md) for the
+contract and verification boundary.

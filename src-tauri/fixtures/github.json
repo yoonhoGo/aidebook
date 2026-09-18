@@ -1,0 +1,74 @@
+{
+  "provider": "github",
+  "connection_id": "fixture-github-repository",
+  "snapshots": [
+    {
+      "source": {
+        "provider": "github",
+        "account_id": "yoonhoGo",
+        "external_id": "yoonhoGo/aidebook#42",
+        "url": "https://github.com/yoonhoGo/aidebook/issues/42",
+        "kind": "issue"
+      },
+      "title": "Document native release smoke test",
+      "body": "Track the macOS native verification before the release checklist is closed.",
+      "source_updated_at": "2026-09-18T08:45:00Z",
+      "fetched_at": "2026-09-18T09:03:00Z",
+      "content_hash": "",
+      "access_status": "accessible",
+      "unavailable_reason": null,
+      "is_deleted": false
+    },
+    {
+      "source": {
+        "provider": "github",
+        "account_id": "yoonhoGo",
+        "external_id": "yoonhoGo/aidebook#42",
+        "url": "https://github.com/yoonhoGo/aidebook/issues/42",
+        "kind": "issue"
+      },
+      "title": "Document native release smoke test",
+      "body": "Track the macOS native verification before the release checklist is closed.",
+      "source_updated_at": "2026-09-18T08:45:00Z",
+      "fetched_at": "2026-09-18T09:03:00Z",
+      "content_hash": "",
+      "access_status": "accessible",
+      "unavailable_reason": null,
+      "is_deleted": false
+    },
+    {
+      "source": {
+        "provider": "github",
+        "account_id": "yoonhoGo",
+        "external_id": "yoonhoGo/aidebook#99",
+        "url": "https://github.com/yoonhoGo/aidebook/issues/99",
+        "kind": "issue"
+      },
+      "title": "Removed private issue",
+      "body": "",
+      "source_updated_at": null,
+      "fetched_at": "2026-09-18T09:04:00Z",
+      "content_hash": "",
+      "access_status": "permission_denied",
+      "unavailable_reason": "repository access revoked",
+      "is_deleted": false
+    },
+    {
+      "source": {
+        "provider": "github",
+        "account_id": "yoonhoGo",
+        "external_id": "yoonhoGo/aidebook#100",
+        "url": "https://github.com/yoonhoGo/aidebook/issues/100",
+        "kind": "issue"
+      },
+      "title": "Provider timeout",
+      "body": "",
+      "source_updated_at": null,
+      "fetched_at": "2026-09-18T09:05:00Z",
+      "content_hash": "",
+      "access_status": "unavailable",
+      "unavailable_reason": "fixture API timeout",
+      "is_deleted": false
+    }
+  ]
+}
