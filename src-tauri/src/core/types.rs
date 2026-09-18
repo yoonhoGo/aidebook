@@ -442,6 +442,19 @@ pub struct SourcesRefreshResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CacheClearResult {
+    pub snapshots_removed: usize,
+    pub sources_preserved: bool,
+    pub memories_preserved: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BackupResult {
+    pub path: String,
+    pub schema_version: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SyncState {
     pub connection_id: String,
     pub provider: String,

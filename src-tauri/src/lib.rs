@@ -1,10 +1,10 @@
 pub mod core;
 
 use core::{
-    ContextRequest, Core, CoreError, CredentialStore, GitHubAdapter, GitHubConfig, HttpGitHubApi,
-    KeychainCredentialStore, MemoryRestoreInput, MemoryRetractInput, MemoryUpsertInput,
-    ObsidianAdapter, ReadOnlyConnector, RelationInput, SearchRequest, Snapshot, SourceRef,
-    SourcesRefreshResult, UiMemoryUpsertInput, VaultConfig, VaultScanResult,
+    ContextRequest, Core, CoreEndpoint, CoreError, CoreServer, CredentialStore, GitHubAdapter,
+    GitHubConfig, HttpGitHubApi, KeychainCredentialStore, MemoryRestoreInput, MemoryRetractInput,
+    MemoryUpsertInput, ObsidianAdapter, ReadOnlyConnector, RelationInput, SearchRequest, Snapshot,
+    SourceRef, SourcesRefreshResult, UiMemoryUpsertInput, VaultConfig, VaultScanResult,
 };
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -64,6 +64,13 @@ struct GitHubSelectInput {
 struct GitHubCredentialInput {
     connection_id: String,
     token: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct GitHubDisconnectInput {
+    connection_id: String,
+    #[serde(default)]
+    delete_credential: bool,
 }
 
 #[tauri::command]
@@ -196,6 +203,31 @@ fn github_refresh(state: State<'_, AppState>) -> Result<SourcesRefreshResult, Co
 }
 
 #[tauri::command]
+fn github_disconnect(
+    input: GitHubDisconnectInput,
+    state: State<'_, AppState>,
+) -> Result<(), CoreError> {
+    let mut github = state.github.lock().map_err(|_| CoreError::Database {
+        message: "github state mutex was poisoned".to_string(),
+    })?;
+    let selected = github.as_ref().ok_or_else(|| CoreError::InvalidInput {
+        field: "github".to_string(),
+        message: "no GitHub repository is selected".to_string(),
+    })?;
+    if selected.config().connection_id != input.connection_id {
+        return Err(CoreError::PermissionDenied {
+            provider: "github".to_string(),
+            message: "disconnect scope does not match the selected repository".to_string(),
+        });
+    }
+    if input.delete_credential {
+        selected.credentials().delete(&input.connection_id)?;
+    }
+    *github = None;
+    Ok(())
+}
+
+#[tauri::command]
 fn context_search(
     request: SearchRequest,
     state: State<'_, AppState>,
@@ -294,6 +326,21 @@ fn ui_memory_list(state: State<'_, AppState>) -> Result<Vec<core::UiMemory>, Cor
     state.core.ui_memories()
 }
 
+#[tauri::command]
+fn cache_clear(state: State<'_, AppState>) -> Result<core::CacheClearResult, CoreError> {
+    state.core.clear_cache()
+}
+
+#[tauri::command]
+fn core_backup(path: String, state: State<'_, AppState>) -> Result<core::BackupResult, CoreError> {
+    state.core.backup_to(path)
+}
+
+#[tauri::command]
+fn core_restore(path: String, state: State<'_, AppState>) -> Result<core::BackupResult, CoreError> {
+    state.core.restore_from(path)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -307,6 +354,13 @@ pub fn run() {
             fs::create_dir_all(&data_dir)?;
             let core = Core::open(data_dir.join("aidebook.sqlite"))
                 .map_err(|error| Box::new(error) as Box<dyn std::error::Error>)?;
+            let endpoint = CoreEndpoint::in_data_dir(&data_dir);
+            let server = CoreServer::bind(endpoint.clone(), core.clone(), None)
+                .map_err(|error| Box::new(error) as Box<dyn std::error::Error>)?;
+            std::thread::spawn(move || {
+                let _ = server.serve();
+            });
+            app.manage(endpoint);
             app.manage(AppState {
                 core,
                 vault: Mutex::new(None),
@@ -321,6 +375,7 @@ pub fn run() {
             github_select,
             github_credential_set,
             github_refresh,
+            github_disconnect,
             context_search,
             context_get,
             relation_add,
@@ -331,7 +386,10 @@ pub fn run() {
             ui_memory_upsert,
             ui_memory_retract,
             ui_memory_restore,
-            ui_memory_list
+            ui_memory_list,
+            cache_clear,
+            core_backup,
+            core_restore
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

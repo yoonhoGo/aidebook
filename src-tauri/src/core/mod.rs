@@ -9,6 +9,8 @@
 mod db;
 pub mod fixtures;
 pub mod github;
+pub mod ipc;
+pub mod mcp;
 pub mod obsidian;
 pub mod types;
 
@@ -20,6 +22,10 @@ pub use github::{
     CredentialStore, FixtureGitHubApi, GitHubAdapter, GitHubApi, GitHubApiError, GitHubComment,
     GitHubConfig, GitHubIssue, GitHubPage, HttpGitHubApi, KeychainCredentialStore,
     MemoryCredentialStore,
+};
+pub use ipc::{
+    dispatch as ipc_dispatch, CoreClient, CoreEndpoint, CoreServer, IpcError, IpcRequest,
+    IpcResponse, IPC_METHODS,
 };
 pub use obsidian::{
     ObsidianAdapter, VaultChange, VaultChangeKind, VaultConfig, VaultIndex, VaultScanResult,
@@ -260,6 +266,18 @@ impl Core {
 
     pub fn ui_memories(&self) -> CoreResult<Vec<UiMemory>> {
         self.database.ui_memories()
+    }
+
+    pub fn clear_cache(&self) -> CoreResult<CacheClearResult> {
+        self.database.clear_cache()
+    }
+
+    pub fn backup_to(&self, destination: impl AsRef<Path>) -> CoreResult<BackupResult> {
+        self.database.backup_to(destination)
+    }
+
+    pub fn restore_from(&self, backup: impl AsRef<Path>) -> CoreResult<BackupResult> {
+        self.database.restore_from(backup)
     }
 
     pub fn memory(&self, id: &str) -> CoreResult<Memory> {

@@ -6,7 +6,7 @@
 ## M0 — 완료
 
 - Rust `Core` 공통 모델/API와 구조화 `CoreError` 추가
-- SQLite transaction 마이그레이션(v1–v3), 외래 키, bundled FTS5 snapshot 검색
+- SQLite transaction 마이그레이션(v1–v4), 외래 키, bundled FTS5 snapshot 검색
 - source identity 중복 제거, provider/account namespace, 기간·종류 필터
 - 접근 상태와 freshness, 마지막 정상 snapshot을 보존하는 실패 기록, 연결별 SyncState
 - 메모 근거·저장 이유·작성 주체·claim type 검증
@@ -66,24 +66,62 @@ M1의 watcher는 재현 가능한 polling 구현이다. native FSEvents와 실�
 - 제목 중복 비병합, 관계 해제, 10개 UI 메모 저장, 멱등성/버전 충돌, 접근 불가
   evidence와 사용자 메모 보존을 integration test로 검증
 
+## M4 — 완료 (단일 Core owner · authenticated IPC · CLI/MCP)
+
+- Tauri setup이 앱 데이터 디렉터리에서 Core를 한 번 열고, 같은 프로세스의
+  Unix socket `CoreServer`를 owner로 시작; `Arc<Database>` 외부 직접 open 경로 없음
+- socket/lock/token 파일을 `0600`으로 만들고 `create_new` lock과 stale socket
+  검사로 복수 owner를 거부
+- bearer token과 constant-time 비교, 구조화 `unauthenticated`/owner 오류,
+  SQLite·SQL path를 받지 않는 line-delimited JSON IPC 구현
+- `aidebook-cli`가 동일 six method를 호출하고 성공 JSON은 stdout, 오류 JSON은
+  stderr에 출력; `aidebook-core` standalone owner도 제공
+- `mcp serve --stdio`가 initialize, tools/list, tools/call과 동일 six tool을
+  노출하며 tool 결과·오류를 Core IPC로 전달
+- IPC integration test에서 direct Core/CLI client/MCP tool 결과 일치, fixture
+  refresh, 잘못된 token 거부, six tool count를 검증
+
+실제 패키지 바이너리를 외부 MCP host에 연결하거나 macOS 창 종료·재시작,
+Keychain/실계정 provider와 함께 실행하는 native smoke는 아직 검증하지 않았다.
+
+## M5 — 완료 (보호·접근성·arm64 local package)
+
+- `Core::backup_to`는 SQLite `VACUUM INTO` 임시 파일과 integrity check 후
+  명시된 새 경로로 commit; `restore_from`은 corrupt backup 실패 시 원래 DB를
+  보존하고 검증된 backup만 교체
+- `cache_clear`는 snapshots/FTS만 삭제하고 sources·memory·evidence를 보존;
+  GitHub disconnect의 credential 삭제는 별도 명시 옵션
+- UI에 백업·복원·캐시만 삭제 control을 추가하고 browser에서는 네이티브 작업을
+  실행하지 않으며 localStorage를 자동 삭제하지 않음
+- existing 44px controls, visible focus outline, keyboard splitter, semantic
+  labels/fieldset, `prefers-reduced-motion`와 in-app reduce-motion CSS를 보존
+- `scripts/package-arm64.sh`가 `aidebook`, `aidebook-cli`, `aidebook-core`를
+  `aarch64-apple-darwin` local staging directory에 생성; Cask는 placeholder
+  template만 제공하며 signing/notarization/tap publish를 수행하지 않음
+- deterministic FTS benchmark: seed `20260919`, seed count `10000`, warmup
+  `5`, measured `30`, p95 `26.268ms`, environment `macos/aarch64`, rustc
+  `1.94.1`, parallelism `12`; reproducible command는 아래 표에 기록
+
 ## 검증 기록
 
 | 명령 | 결과 |
 | --- | --- |
 | `npm run build` | 통과: `tsc` + Vite production build |
-| `cargo test --manifest-path src-tauri/Cargo.toml` | 통과: Rust unit 6개, M0 integration 6개, M1 integration 1개, M2 integration 2개, M3 integration 3개 |
+| `cargo test --manifest-path src-tauri/Cargo.toml` | 통과: Rust unit 9개, M0 integration 6개, M1 integration 1개, M2 integration 2개, M3 integration 3개, M4 integration 1개 |
 | `cargo check --manifest-path src-tauri/Cargo.toml` | 통과 |
 | `git diff --check` | 통과 |
 | `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` | 통과 |
+| `cargo test --manifest-path src-tauri/Cargo.toml --test m5_benchmark -- --nocapture` | 통과: seed=20260919, n=10000, warmup=5, runs=30, p95=26.268ms, macOS aarch64 |
+| `AIDEBOOK_PACKAGE_DIR=/tmp/aidebook-arm64-package scripts/package-arm64.sh` | 통과: arm64 local binaries 3개 staged; 서명/공증/릴리스 미실행 |
 
 ## 검증하지 않은 경계
 
 - 실제 macOS Tauri 실행, native SQLite app-data 경로, UI persistence 연결
 - 실제 Obsidian vault/iCloud download·충돌·FSEvents watcher
 - 실제 GitHub 계정·토큰·Keychain·권한 철회
-- CLI/MCP stdio 프로세스와 인증된 local IPC
-- 10,000건 검색 p95 300ms 목표의 실제 측정
-- arm64 패키징, 서명·공증, Homebrew Cask 설치
+- 외부 MCP host가 실행한 packaged CLI/MCP stdio와 macOS 창 종료·재시작
+- 실제 10,000건 benchmark를 제외한 사용자 데이터 규모·실계정 환경의 성능
+- arm64 패키징은 local binary staging까지 검증했으며 서명·공증·Homebrew Cask 설치는 미검증
 
 fixture 및 in-memory 테스트는 위 native/live 경계를 대신하지 않는다. 현재
 React UI의 `localStorage` 메모와 아이콘은 보존했으며 자동 migration이나 삭제를
@@ -92,13 +130,12 @@ React UI의 `localStorage` 메모와 아이콘은 보존했으며 자동 migrati
 
 ## 다음 작업
 
-M4에서 단일 Core
-소유 프로세스와 인증된 local IPC/CLI/MCP를 추가한다. M5에서 백업·복구,
-접근성·arm64 패키징 템플릿·재현 가능한 10,000건 p95 측정을 마무리한다.
+M5까지 로컬 구현은 완료했다. 남은 것은 signing/notarization, public release
+asset/Cask ownership, 실계정·iCloud·native window 및 외부 MCP host smoke다.
 
 ## jj 기록
 
 로드맵 변경 `sqonnulz` 위에 M0 구현 `sxonqxql`/`yptolqwy`, M1 구현
-`mqkpvwql`, M2 구현 `qswsrmtk`, M3 구현 `lqxykmkx`를 순서대로 기록한다.
-각 단계는 다음 단계의 빈 child change에서 계속하며 main 이력·원격·push는
-건드리지 않았다.
+`mqkpvwql`, M2 구현 `qswsrmtk`, M3 구현 `lqxykmkx`, M4 구현 `svykzmml`,
+M5 구현 child를 순서대로 기록한다. 각 단계는 다음 단계의 빈 child change에서
+계속하며 main 이력·원격·push는 건드리지 않았다.

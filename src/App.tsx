@@ -600,6 +600,49 @@ function App() {
     }
   }
 
+  async function clearCoreCache() {
+    if (!isNativeRuntime()) {
+      setToast("브라우저 데모에서는 코어 캐시를 삭제하지 않습니다.");
+      return;
+    }
+    try {
+      const result = await invoke<{ snapshots_removed: number }>("cache_clear");
+      setToast(`캐시 ${result.snapshots_removed}개를 삭제했습니다. 원본 목록과 사용자 메모는 보존됩니다.`);
+    } catch (error) {
+      setToast(`캐시를 삭제하지 못했습니다: ${String(error)}`);
+    }
+  }
+
+  async function backupCore() {
+    const path = window.prompt("백업 파일의 새 경로를 입력하세요.");
+    if (!path) return;
+    if (!isNativeRuntime()) {
+      setToast("브라우저 데모에서는 네이티브 DB 백업을 실행하지 않습니다.");
+      return;
+    }
+    try {
+      await invoke("core_backup", { path });
+      setToast("코어 백업을 commit했습니다.");
+    } catch (error) {
+      setToast(`백업하지 못했습니다: ${String(error)}`);
+    }
+  }
+
+  async function restoreCore() {
+    const path = window.prompt("복원할 백업 파일의 경로를 입력하세요.");
+    if (!path) return;
+    if (!isNativeRuntime()) {
+      setToast("브라우저 데모에서는 네이티브 DB 복원을 실행하지 않습니다.");
+      return;
+    }
+    try {
+      await invoke("core_restore", { path });
+      setToast("코어 백업을 검증한 뒤 복원했습니다. 원래 localStorage 메모는 삭제하지 않았습니다.");
+    } catch (error) {
+      setToast(`복원하지 못했습니다: ${String(error)}`);
+    }
+  }
+
   function undoChange() {
     const previous = undoStack[undoStack.length - 1];
     if (!previous) return;
@@ -683,7 +726,7 @@ function App() {
     if (setting === "플러그인") return <div className="settings-list"><p>초기 플러그인은 GitHub와 Obsidian입니다.</p><button className="btn btn-secondary" type="button" onClick={() => navigate("connections")}>연결과 수집 범위 관리</button><div className="notice">제3자 마켓플레이스는 초기 범위에 포함하지 않습니다.</div></div>;
     if (setting === "에이전트 연결") return <div className="settings-list"><div className="notice">연결 전 · 외부 에이전트가 도구를 호출한 경우에만 메모를 기록합니다.</div><SettingRow title="CLI 설치 상태" description="이 앱에서는 로컬 설치 여부를 확인할 수 없습니다."><span className="tag">확인하지 못함</span></SettingRow><h3>로컬 MCP 설정</h3><pre>{JSON.stringify({ mcpServers: { aidebook: { command: "aidebook", args: ["mcp", "serve", "--stdio"] } } }, null, 2)}</pre><button className="btn btn-secondary" type="button" onClick={() => { void navigator.clipboard?.writeText(JSON.stringify({ mcpServers: { aidebook: { command: "aidebook", args: ["mcp", "serve", "--stdio"] } } }, null, 2)); setToast("MCP 설정을 복사했습니다."); }}>설정 복사</button><p className="small muted">제안된 CLI 형식입니다. 실제 바이너리 설치 후 사용할 수 있습니다.</p></div>;
     if (setting === "메모와 데이터") return <div className="settings-list"><SettingRow title="자동 메모 기준" description="명시한 결정·선호·제약을 기록하고, 추론은 후보로 구분합니다."><span className="tag">초기 기준</span></SettingRow><SettingRow title="비기록 범위" description="인증 비밀은 기록 대상에서 제외합니다."><input className="inline-input" aria-label="비기록 범위" value={settings.exclude} onChange={(event) => setSetting("exclude", event.target.value)} placeholder="예: 개인 일기" /></SettingRow><SettingRow title="메모 내보내기" description="이 기기에 저장된 메모를 JSON으로 내려받습니다."><button className="btn btn-secondary" type="button" onClick={exportNotes}>내보내기</button></SettingRow><SettingRow title="로컬 메모를 코어로 가져오기" description="명시적으로 실행할 때만 localStorage 메모를 네이티브 SQLite 코어에 복사합니다. 원본 localStorage는 삭제하지 않습니다."><button className="btn btn-secondary" type="button" onClick={() => { void importLocalNotes(); }}>가져오기</button></SettingRow><div className="notice">저장 성공은 코어의 commit 뒤에만 표시됩니다. 브라우저에서는 데모 저장과 네이티브 저장을 구분합니다.</div></div>;
-    if (setting === "동기화") return <div className="settings-list"><SettingRow title="조회 주기" description="실제 연결 후 앱이 실행 중일 때 적용됩니다."><select value={settings.syncPeriod} aria-label="조회 주기" onChange={(event) => setSetting("syncPeriod", event.target.value as AppSettings["syncPeriod"])}><option>5분</option><option>15분</option><option>수동</option></select></SettingRow><SettingRow title="웹훅 릴레이" description="사용자가 별도로 켜고 권한을 부여해야 합니다."><span className="tag">연결 안 함</span></SettingRow><button className="btn btn-secondary" type="button" onClick={() => navigate("connections")}>연결별 마지막 성공 확인</button></div>;
+    if (setting === "동기화") return <div className="settings-list"><SettingRow title="조회 주기" description="실제 연결 후 앱이 실행 중일 때 적용됩니다."><select value={settings.syncPeriod} aria-label="조회 주기" onChange={(event) => setSetting("syncPeriod", event.target.value as AppSettings["syncPeriod"])}><option>5분</option><option>15분</option><option>수동</option></select></SettingRow><SettingRow title="웹훅 릴레이" description="사용자가 별도로 켜고 권한을 부여해야 합니다."><span className="tag">연결 안 함</span></SettingRow><button className="btn btn-secondary" type="button" onClick={() => navigate("connections")}>연결별 마지막 성공 확인</button><div className="card"><h3>로컬 데이터 보호</h3><p className="small muted">연결 해제는 credential과 선택 범위를 끊고, 캐시 삭제는 별도의 명시 작업입니다. 사용자 메모는 백업·복원과 독립적으로 보존됩니다.</p><div className="actions"><button className="btn btn-secondary" type="button" onClick={() => { void backupCore(); }}>백업</button><button className="btn btn-secondary" type="button" onClick={() => { void restoreCore(); }}>복원</button><button className="btn btn-ghost" type="button" onClick={() => { void clearCoreCache(); }}>캐시만 삭제</button></div></div></div>;
     return <div className="settings-list"><p>디자인 및 로컬 기능 · 2026.09.18</p><div className="notice">초기 업데이트는 Homebrew 배포 경로를 사용할 계획입니다. 설치·업데이트 기능은 이 화면에서 실행하지 않습니다.</div><p className="small muted">진단 예시에는 토큰, 외부 문서 본문, 메모 본문을 포함하지 않습니다.</p><button className="btn btn-secondary" type="button" onClick={exportDiagnostics}>진단 예시 내보내기</button></div>;
   }
 

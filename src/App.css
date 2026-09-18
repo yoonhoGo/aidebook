@@ -551,6 +551,10 @@ pre { overflow: auto; padding: 18px; margin: 0; border-radius: 5px; background: 
 .input,
 .textarea { padding: 10px; }
 .textarea { min-height: 135px; resize: vertical; line-height: 1.6; }
+.evidence-picker { display: grid; gap: 8px; padding: 12px; margin: 18px 0; border: 1px solid var(--border); border-radius: 6px; }
+.evidence-picker legend { padding: 0 5px; color: var(--muted); font-size: 12px; }
+.check-row { display: flex; min-height: 44px; align-items: center; gap: 8px; color: var(--fg); font-size: 12px; }
+.check-row input { width: 18px; height: 18px; min-height: 18px; accent-color: var(--fg); }
 .modal .actions { justify-content: flex-end; margin-top: 24px; }
 .modal > p { color: var(--muted); font-size: 12px; }
 .source-detail { display: grid; gap: 15px; }

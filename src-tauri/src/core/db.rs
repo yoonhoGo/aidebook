@@ -159,26 +159,33 @@ const MIGRATIONS: &[(i64, &str)] = &[
 #[derive(Debug)]
 pub struct Database {
     connection: Mutex<Connection>,
+    path: Option<std::path::PathBuf>,
 }
 
 impl Database {
     pub fn open(path: impl AsRef<Path>) -> CoreResult<Self> {
-        let connection = Connection::open(path).map_err(database_error)?;
-        Self::from_connection(connection, None)
+        let path = path.as_ref().to_path_buf();
+        let connection = Connection::open(&path).map_err(database_error)?;
+        Self::from_connection(connection, None, Some(path))
     }
 
     pub fn in_memory() -> CoreResult<Self> {
         let connection = Connection::open_in_memory().map_err(database_error)?;
-        Self::from_connection(connection, None)
+        Self::from_connection(connection, None, None)
     }
 
-    fn from_connection(mut connection: Connection, fail_at: Option<i64>) -> CoreResult<Self> {
+    fn from_connection(
+        mut connection: Connection,
+        fail_at: Option<i64>,
+        path: Option<std::path::PathBuf>,
+    ) -> CoreResult<Self> {
         connection
             .execute_batch("PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;")
             .map_err(database_error)?;
         migrate(&mut connection, fail_at)?;
         Ok(Self {
             connection: Mutex::new(connection),
+            path,
         })
     }
 
@@ -187,7 +194,7 @@ impl Database {
     #[cfg(test)]
     fn in_memory_with_migration_failure(version: i64) -> CoreResult<Self> {
         let connection = Connection::open_in_memory().map_err(database_error)?;
-        Self::from_connection(connection, Some(version))
+        Self::from_connection(connection, Some(version), None)
     }
 
     fn lock(&self) -> CoreResult<std::sync::MutexGuard<'_, Connection>> {
@@ -1083,6 +1090,176 @@ impl Database {
         Ok(memories)
     }
 
+    pub fn clear_cache(&self) -> CoreResult<CacheClearResult> {
+        let mut connection = self.lock()?;
+        let transaction = connection.transaction().map_err(database_error)?;
+        let snapshots_removed = transaction
+            .query_row("SELECT COUNT(*) FROM snapshots", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .map_err(database_error)? as usize;
+        transaction
+            .execute("DELETE FROM snapshot_fts", [])
+            .map_err(database_error)?;
+        transaction
+            .execute("DELETE FROM snapshots", [])
+            .map_err(database_error)?;
+        transaction.commit().map_err(database_error)?;
+        Ok(CacheClearResult {
+            snapshots_removed,
+            sources_preserved: true,
+            memories_preserved: true,
+        })
+    }
+
+    pub fn backup_to(&self, destination: impl AsRef<Path>) -> CoreResult<BackupResult> {
+        let destination = destination.as_ref().to_path_buf();
+        if destination.exists() {
+            return Err(CoreError::InvalidInput {
+                field: "backup_path".to_string(),
+                message: "destination already exists; choose an explicit new path".to_string(),
+            });
+        }
+        if let Some(parent) = destination.parent() {
+            if !parent.exists() {
+                return Err(CoreError::NotFound {
+                    entity: "backup directory".to_string(),
+                    id: parent.display().to_string(),
+                });
+            }
+        }
+        let temporary = destination.with_file_name(format!(
+            ".{}.tmp-{}",
+            destination
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("aidebook-backup"),
+            Uuid::new_v4()
+        ));
+        {
+            let connection = self.lock()?;
+            connection
+                .execute(
+                    "VACUUM INTO ?1",
+                    params![temporary.to_string_lossy().to_string()],
+                )
+                .map_err(database_error)?;
+        }
+        let result = match validate_database_file(&temporary) {
+            Ok(schema_version) => {
+                std::fs::rename(&temporary, &destination).map_err(|error| CoreError::Database {
+                    message: format!("could not finalize backup: {error}"),
+                })?;
+                BackupResult {
+                    path: destination.display().to_string(),
+                    schema_version,
+                }
+            }
+            Err(error) => {
+                let _ = std::fs::remove_file(&temporary);
+                return Err(error);
+            }
+        };
+        Ok(result)
+    }
+
+    pub fn restore_from(&self, backup: impl AsRef<Path>) -> CoreResult<BackupResult> {
+        let backup = backup.as_ref().to_path_buf();
+        let target = self.path.clone().ok_or_else(|| CoreError::InvalidInput {
+            field: "restore_path".to_string(),
+            message: "an on-disk Core database is required for restore".to_string(),
+        })?;
+        if backup == target {
+            return Err(CoreError::InvalidInput {
+                field: "restore_path".to_string(),
+                message: "backup and active database must be different paths".to_string(),
+            });
+        }
+        let schema_version = validate_database_file(&backup)?;
+        let temporary = target.with_file_name(format!(
+            ".{}.restore-{}",
+            target
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("aidebook"),
+            Uuid::new_v4()
+        ));
+        std::fs::copy(&backup, &temporary).map_err(|error| CoreError::Database {
+            message: format!("could not stage restore: {error}"),
+        })?;
+        if let Err(error) = validate_database_file(&temporary) {
+            let _ = std::fs::remove_file(&temporary);
+            return Err(error);
+        }
+        let old_path = target.with_file_name(format!(
+            ".{}.before-restore-{}",
+            target
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("aidebook"),
+            Uuid::new_v4()
+        ));
+        let mut connection = self.lock()?;
+        let replacement = Connection::open_in_memory().map_err(database_error)?;
+        let old_connection = std::mem::replace(&mut *connection, replacement);
+        drop(old_connection);
+        let had_target = target.exists();
+        if had_target {
+            if let Err(error) = std::fs::rename(&target, &old_path) {
+                let restored = open_database_connection(&target);
+                if let Ok(restored) = restored {
+                    *connection = restored;
+                }
+                let _ = std::fs::remove_file(&temporary);
+                return Err(CoreError::Database {
+                    message: format!("could not stage active database for restore: {error}"),
+                });
+            }
+        }
+        if let Err(error) = std::fs::rename(&temporary, &target) {
+            if had_target {
+                let _ = std::fs::rename(&old_path, &target);
+            }
+            if let Ok(restored) = open_database_connection(&target) {
+                *connection = restored;
+            }
+            return Err(CoreError::Database {
+                message: format!("could not install restored database: {error}"),
+            });
+        }
+        match open_database_connection(&target) {
+            Ok(restored) => {
+                *connection = restored;
+                drop(connection);
+                if had_target {
+                    let _ = std::fs::remove_file(&old_path);
+                }
+                Ok(BackupResult {
+                    path: target.display().to_string(),
+                    schema_version,
+                })
+            }
+            Err(error) => {
+                let failed_path = target.with_file_name(format!(
+                    ".{}.failed-restore-{}",
+                    target
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or("aidebook"),
+                    Uuid::new_v4()
+                ));
+                let _ = std::fs::rename(&target, &failed_path);
+                if had_target {
+                    let _ = std::fs::rename(&old_path, &target);
+                }
+                if let Ok(restored) = open_database_connection(&target) {
+                    *connection = restored;
+                }
+                Err(error)
+            }
+        }
+    }
+
     pub fn memory(&self, id: &str) -> CoreResult<Memory> {
         let connection = self.lock()?;
         load_memory(&connection, id)
@@ -1201,6 +1378,40 @@ fn migrate(connection: &mut Connection, fail_at: Option<i64>) -> CoreResult<()> 
         })?;
     }
     Ok(())
+}
+
+fn open_database_connection(path: &Path) -> CoreResult<Connection> {
+    let mut connection = Connection::open(path).map_err(database_error)?;
+    connection
+        .execute_batch("PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;")
+        .map_err(database_error)?;
+    migrate(&mut connection, None)?;
+    Ok(connection)
+}
+
+fn validate_database_file(path: &Path) -> CoreResult<i64> {
+    if !path.exists() {
+        return Err(CoreError::NotFound {
+            entity: "backup".to_string(),
+            id: path.display().to_string(),
+        });
+    }
+    let connection = open_database_connection(path)?;
+    let integrity: String = connection
+        .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+        .map_err(database_error)?;
+    if integrity != "ok" {
+        return Err(CoreError::Database {
+            message: format!("SQLite integrity check failed: {integrity}"),
+        });
+    }
+    connection
+        .query_row(
+            "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(database_error)
 }
 
 fn database_error(error: rusqlite::Error) -> CoreError {

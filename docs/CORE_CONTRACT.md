@@ -8,12 +8,14 @@ Keychain, CLI 프로세스, MCP stdio 서버를 시작하지 않는다.
 ## 소유권과 경계
 
 ```text
-React/Tauri UI ─┐
-향후 CLI       ─┼─ Core API ── SQLite + FTS5
-향후 MCP       ─┘              ├─ snapshots (재생성 가능한 캐시)
-                               └─ memories (사용자 소유 로컬 기록)
+Tauri window ───────────────┐
+CLI JSON / MCP stdio ────────┼─ authenticated local IPC ── Core owner ── SQLite + FTS5
+                             └─ (no direct DB access)       ├─ snapshots (cache)
+                                                           └─ memories (user-owned)
 ```
 
+M4부터 Tauri desktop 프로세스가 하나의 `Core`와 IPC owner를 함께 소유한다.
+CLI/MCP는 `docs/IPC_PROTOCOL.md`의 socket client이며 DB를 직접 열 수 없다.
 `Core`만 DB를 열고 변경한다. UI는 현재 `localStorage`를 계속 사용하며,
 M0에서 자동으로 DB로 가져오거나 기존 UI 데이터를 삭제하지 않는다. 외부
 자료는 읽기 전용·비신뢰 데이터이고 외부 서비스에 쓰는 메서드나 토큰 필드는

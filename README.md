@@ -15,7 +15,8 @@ user-reviewable in-app memories.
   FTS5, versioned local memories, sync state, and read-only fixture adapters;
   M1 adds an explicitly selected, read-only Obsidian vault adapter, and M2
   adds a selected-scope GitHub read-only adapter with credential-store
-  boundaries. CLI and MCP remain later staged boundaries.
+  boundaries, and M4 adds an authenticated local Core IPC owner plus CLI/MCP
+  transports.
 
 The first UI slice mirrors the planned focus: work contexts on the left,
 memory and activity in the centre, and source evidence on the right. Work
@@ -47,12 +48,16 @@ with Git. Use `jj status`, `jj diff`, and `jj log` for change management.
 ## Scope notes
 
 The product plan is kept in the Obsidian vault as `비서의 노트 기획서.md`.
-M3 now provides a local SQLite/FTS5 core, deterministic connector fixtures,
+M5 now provides a local SQLite/FTS5 core, deterministic connector fixtures,
 explicitly selected read-only Obsidian/GitHub source adapters, and a Core-backed
 memory UI path with explicit localStorage import. The React UI keeps existing
 localStorage data unless the user chooses import; browser fallback saves are
 labelled as demos. External writes, remote webhook infrastructure, real account
-smoke, CLI/MCP processes, and native app verification remain staged boundaries.
+smoke, packaged distribution, and native app verification remain staged
+boundaries. CLI/MCP use the authenticated Core owner and never open SQLite.
+Backups, restore integrity checks, cache-only deletion, accessibility behavior,
+and a local arm64 package helper are implemented; release signing and public
+Cask publication are intentionally not performed.
 See
 [`docs/CORE_CONTRACT.md`](docs/CORE_CONTRACT.md) and
 [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md) for the
