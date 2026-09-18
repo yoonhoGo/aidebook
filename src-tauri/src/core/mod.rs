@@ -8,12 +8,18 @@
 
 mod db;
 pub mod fixtures;
+pub mod github;
 pub mod obsidian;
 pub mod types;
 
 use db::Database;
 pub use fixtures::{
     ChangeBatch, ConnectorConnection, FixtureAdapter, FixtureFile, ReadOnlyConnector,
+};
+pub use github::{
+    CredentialStore, FixtureGitHubApi, GitHubAdapter, GitHubApi, GitHubApiError, GitHubComment,
+    GitHubConfig, GitHubIssue, GitHubPage, HttpGitHubApi, KeychainCredentialStore,
+    MemoryCredentialStore,
 };
 pub use obsidian::{
     ObsidianAdapter, VaultChange, VaultChangeKind, VaultConfig, VaultIndex, VaultScanResult,
@@ -36,7 +42,7 @@ pub fn status() -> CoreStatus {
         product: "Aidebook",
         version: env!("CARGO_PKG_VERSION"),
         persistence: "SQLite + FTS5 (M0)",
-        connectors: "read-only contracts + fixtures (M0)",
+        connectors: "read-only Obsidian + GitHub adapters (M1/M2)",
     }
 }
 
@@ -256,5 +262,6 @@ fn error_code(error: &CoreError) -> &'static str {
         CoreError::Migration { .. } => "migration",
         CoreError::Database { .. } => "database",
         CoreError::Connector { .. } => "connector",
+        CoreError::Provider { .. } => "provider",
     }
 }

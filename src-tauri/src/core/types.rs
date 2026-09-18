@@ -466,6 +466,13 @@ pub enum CoreError {
     Database { message: String },
     #[error("connector error: {message}")]
     Connector { message: String },
+    #[error("{provider} provider error ({code}): {message}")]
+    Provider {
+        provider: String,
+        code: String,
+        message: String,
+        retry_at: Option<String>,
+    },
 }
 
 impl fmt::Display for AccessStatus {

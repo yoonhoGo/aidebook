@@ -31,12 +31,30 @@
 M1의 watcher는 재현 가능한 polling 구현이다. native FSEvents와 실제 iCloud
 다운로드 상태는 아직 검증하지 않았다.
 
+## M2 — 완료 (선택된 GitHub repository)
+
+- `GitHubConfig`가 account/connection/owner/repository를 하나의 명시적 scope로
+  검증하고 경로 주입·범위 이탈을 거부
+- `GitHubAdapter`가 이슈·pull request·댓글·상태·labels를 읽기 전용 snapshot으로
+  변환하고 page cursor를 순회
+- `CredentialStore` 경계와 in-memory fixture store 추가; macOS에서는
+  `security` Keychain 명령으로만 credential을 읽고 저장
+- 401/403/404/429/5xx·network·malformed 응답을 구조화 오류로 분류
+- `github_select`/`github_credential_set`/`github_refresh` Tauri command를 통해
+  사용자의 명시적 선택·저장·수동 refresh만 허용
+- fixture 페이지·권한 거부·누락 credential·페이지 순회 테스트와 실패 시
+  마지막 성공 `fetched_at`/snapshot 보존 테스트 통과
+
+실제 GitHub 계정·토큰·macOS Keychain·네트워크 curl refresh는 실행하지 않았다.
+라이브 transport는 수동 선택 경로에서만 동작하도록 구현했으며 fixture 증거가
+실계정 smoke를 대신하지 않는다.
+
 ## 검증 기록
 
 | 명령 | 결과 |
 | --- | --- |
 | `npm run build` | 통과: `tsc` + Vite production build |
-| `cargo test --manifest-path src-tauri/Cargo.toml` | 통과: Rust unit 3개, M0 integration 6개, M1 integration 1개 |
+| `cargo test --manifest-path src-tauri/Cargo.toml` | 통과: Rust unit 6개, M0 integration 6개, M1 integration 1개, M2 integration 2개 |
 | `cargo check --manifest-path src-tauri/Cargo.toml` | 통과 |
 | `git diff --check` | 통과 |
 | `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` | 통과 |
@@ -57,13 +75,12 @@ React UI의 `localStorage` 메모와 아이콘은 보존했으며 자동 migrati
 
 ## 다음 작업
 
-M2에서 사용자가 선택한 GitHub 저장소의 페이지 순회·Keychain 경계·구조화 오류를
-구현한다. M3에서 명시적 관계와 메모 UI 저장 경계를 연결하고, M4에서 단일 Core
+M3에서 명시적 관계와 메모 UI 저장 경계를 연결하고, M4에서 단일 Core
 소유 프로세스와 인증된 local IPC/CLI/MCP를 추가한다. M5에서 백업·복구,
 접근성·arm64 패키징 템플릿·재현 가능한 10,000건 p95 측정을 마무리한다.
 
 ## jj 기록
 
 로드맵 변경 `sqonnulz` 위에 M0 구현 `sxonqxql`/`yptolqwy`, M1 구현
-`mqkpvwql`을 순서대로 기록한다. 각 단계는 다음 단계의 빈 child change에서
-계속하며 main 이력·원격·push는 건드리지 않았다.
+`mqkpvwql`, M2 구현 `qswsrmtk`를 순서대로 기록한다. 각 단계는 다음 단계의
+빈 child change에서 계속하며 main 이력·원격·push는 건드리지 않았다.
