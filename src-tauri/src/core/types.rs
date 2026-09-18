@@ -7,6 +7,7 @@
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 use std::fmt;
 
 pub const DEFAULT_SEARCH_LIMIT: usize = 20;
@@ -152,6 +153,20 @@ pub struct Snapshot {
     pub unavailable_reason: Option<String>,
     #[serde(default)]
     pub is_deleted: bool,
+    /// Allowed connector metadata. Provider-specific unknown frontmatter is
+    /// never promoted into the common contract.
+    #[serde(default)]
+    pub metadata: BTreeMap<String, serde_json::Value>,
+    /// Explicit links discovered by a connector. They are candidates for a
+    /// relation, never an implicit title-based merge.
+    #[serde(default)]
+    pub links: Vec<SourceLink>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourceLink {
+    pub target: String,
+    pub kind: String,
 }
 
 impl Snapshot {
@@ -175,6 +190,8 @@ impl Snapshot {
             access_status: AccessStatus::Accessible,
             unavailable_reason: None,
             is_deleted: false,
+            metadata: BTreeMap::new(),
+            links: Vec::new(),
         }
     }
 

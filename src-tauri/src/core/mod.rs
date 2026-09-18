@@ -8,11 +8,16 @@
 
 mod db;
 pub mod fixtures;
+pub mod obsidian;
 pub mod types;
 
 use db::Database;
 pub use fixtures::{
     ChangeBatch, ConnectorConnection, FixtureAdapter, FixtureFile, ReadOnlyConnector,
+};
+pub use obsidian::{
+    ObsidianAdapter, VaultChange, VaultChangeKind, VaultConfig, VaultIndex, VaultScanResult,
+    VaultWatcher,
 };
 use std::path::Path;
 use std::sync::Arc;

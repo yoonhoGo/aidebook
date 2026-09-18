@@ -132,6 +132,13 @@ const MIGRATIONS: &[(i64, &str)] = &[
         );
         "#,
     ),
+    (
+        3,
+        r#"
+        ALTER TABLE snapshots ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}';
+        ALTER TABLE snapshots ADD COLUMN links_json TEXT NOT NULL DEFAULT '[]';
+        "#,
+    ),
 ];
 
 #[derive(Debug)]
@@ -177,6 +184,14 @@ impl Database {
     pub fn ingest_snapshot(&self, input: Snapshot) -> CoreResult<IngestResult> {
         let snapshot = input.normalize()?;
         let source = snapshot.source.clone();
+        let metadata_json =
+            serde_json::to_string(&snapshot.metadata).map_err(|error| CoreError::Database {
+                message: error.to_string(),
+            })?;
+        let links_json =
+            serde_json::to_string(&snapshot.links).map_err(|error| CoreError::Database {
+                message: error.to_string(),
+            })?;
         let mut connection = self.lock()?;
         let transaction = connection.transaction().map_err(database_error)?;
         let existing_id = find_source_id(&transaction, &source)?;
@@ -188,8 +203,8 @@ impl Database {
                 .execute(
                     "INSERT INTO snapshots
                         (source_id, title, body, source_updated_at, fetched_at, content_hash,
-                         access_status, unavailable_reason, is_deleted)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0)
+                         access_status, unavailable_reason, is_deleted, metadata_json, links_json)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, ?10)
                      ON CONFLICT(source_id) DO UPDATE SET
                         title = excluded.title,
                         body = excluded.body,
@@ -198,7 +213,9 @@ impl Database {
                         content_hash = excluded.content_hash,
                         access_status = excluded.access_status,
                         unavailable_reason = excluded.unavailable_reason,
-                        is_deleted = excluded.is_deleted",
+                        is_deleted = excluded.is_deleted,
+                        metadata_json = excluded.metadata_json,
+                        links_json = excluded.links_json",
                     params![
                         source_id,
                         snapshot.title,
@@ -208,6 +225,8 @@ impl Database {
                         snapshot.content_hash,
                         snapshot.access_status.as_str(),
                         snapshot.unavailable_reason,
+                        metadata_json,
+                        links_json,
                     ],
                 )
                 .map_err(database_error)?;
@@ -231,8 +250,8 @@ impl Database {
                 .execute(
                     "INSERT INTO snapshots
                         (source_id, title, body, source_updated_at, fetched_at, content_hash,
-                         access_status, unavailable_reason, is_deleted)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                         access_status, unavailable_reason, is_deleted, metadata_json, links_json)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
                      ON CONFLICT(source_id) DO UPDATE SET
                         access_status = excluded.access_status,
                         unavailable_reason = excluded.unavailable_reason,
@@ -247,6 +266,8 @@ impl Database {
                         snapshot.access_status.as_str(),
                         snapshot.unavailable_reason,
                         snapshot.is_deleted as i64,
+                        metadata_json,
+                        links_json,
                     ],
                 )
                 .map_err(database_error)?;
@@ -292,6 +313,8 @@ impl Database {
             access_status,
             unavailable_reason: Some(reason.into()),
             is_deleted: false,
+            metadata: std::collections::BTreeMap::new(),
+            links: Vec::new(),
         };
         self.ingest_snapshot(snapshot)
     }
@@ -606,7 +629,8 @@ impl Database {
             .query_row(
                 "SELECT s.provider, s.account_id, s.external_id, s.url, s.kind,
                         sn.title, sn.body, sn.source_updated_at, sn.fetched_at,
-                        sn.content_hash, sn.access_status, sn.unavailable_reason, sn.is_deleted
+                        sn.content_hash, sn.access_status, sn.unavailable_reason, sn.is_deleted,
+                        sn.metadata_json, sn.links_json
                  FROM sources s JOIN snapshots sn ON sn.source_id = s.id
                  WHERE s.provider = ?1 AND s.account_id = ?2 AND s.external_id = ?3 AND s.kind = ?4",
                 params![source.provider, source.account_id, source.external_id, source.kind],
@@ -627,6 +651,8 @@ impl Database {
                         row.get::<_, String>(10)?,
                         row.get::<_, Option<String>>(11)?,
                         row.get::<_, i64>(12)?,
+                        row.get::<_, String>(13)?,
+                        row.get::<_, String>(14)?,
                     ))
                 },
             )
@@ -646,6 +672,12 @@ impl Database {
             access_status: AccessStatus::from_str(&row.6)?,
             unavailable_reason: row.7,
             is_deleted: row.8 != 0,
+            metadata: serde_json::from_str(&row.9).map_err(|error| CoreError::Database {
+                message: error.to_string(),
+            })?,
+            links: serde_json::from_str(&row.10).map_err(|error| CoreError::Database {
+                message: error.to_string(),
+            })?,
         })
     }
 

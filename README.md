@@ -13,7 +13,8 @@ user-reviewable in-app memories.
 - `src-tauri/` — Tauri 2 host and Rust application core.
 - `src-tauri/src/core/` — the shared Rust core boundary. M0 includes SQLite,
   FTS5, versioned local memories, sync state, and read-only fixture adapters;
-  future connector adapters, CLI, and MCP will build on this boundary.
+  M1 adds an explicitly selected, read-only Obsidian vault adapter. GitHub,
+  CLI, and MCP remain later staged boundaries.
 
 The first UI slice mirrors the planned focus: work contexts on the left,
 memory and activity in the centre, and source evidence on the right. Work
@@ -45,11 +46,12 @@ with Git. Use `jj status`, `jj diff`, and `jj log` for change management.
 ## Scope notes
 
 The product plan is kept in the Obsidian vault as `비서의 노트 기획서.md`.
-M0 now provides a local SQLite/FTS5 core and deterministic read-only Obsidian
-and GitHub fixtures. The React UI intentionally keeps its existing
-`localStorage` persistence until a later migration is designed. External
-writes, remote webhook infrastructure, provider credentials, real vault/account
-access, CLI/MCP processes, and native app wiring remain out of M0. See
+M1 now provides a local SQLite/FTS5 core, deterministic connector fixtures, and
+an explicitly selected read-only Obsidian vault scan. The React UI intentionally
+keeps its existing `localStorage` persistence until its explicit migration and
+save boundary is implemented. External writes, remote webhook infrastructure,
+provider credentials, real account access, CLI/MCP processes, and native app
+verification remain staged boundaries. See
 [`docs/CORE_CONTRACT.md`](docs/CORE_CONTRACT.md) and
 [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md) for the
 contract and verification boundary.
