@@ -19,9 +19,11 @@ The owner creates these exact files in the app data directory:
 - `aidebook-core.token` — random per-owner bearer credential, mode `0600`
 - `aidebook-core.lock` — `create_new` owner lock, mode `0600`
 
-An existing live socket is never replaced. A stale socket can only be removed
-after acquiring the exclusive lock. The token is compared without logging or
-returning it. Invalid credentials return a structured `unauthenticated` error.
+An existing live socket is never replaced. The lock records the owner PID so a
+dead owner can be recovered after an unclean exit; a live PID still causes an
+`owner_exists` error. A stale socket can only be removed after acquiring the
+exclusive lock. The token is compared without logging or returning it. Invalid
+credentials return a structured `unauthenticated` error.
 
 ## Request/response
 

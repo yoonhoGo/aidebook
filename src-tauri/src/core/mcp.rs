@@ -62,12 +62,33 @@ pub fn tool_descriptors() -> Vec<Value> {
                 ),
                 "memory.upsert" => (
                     "Create or update a user-owned memory with evidence and version guards.",
-                    json!({"type":"object"}),
-                    Vec::new(),
+                    json!({
+                        "id": {"type":["string","null"]},
+                        "body": {"type":"string"},
+                        "reason": {"type":"string"},
+                        "evidence": {"type":"array", "items":{"type":"object"}},
+                        "author": {"type":"string"},
+                        "claim_type": {"type":"string"},
+                        "idempotency_key": {"type":"string"},
+                        "expected_version": {"type":["integer","null"],"minimum":0},
+                        "supersedes_id": {"type":["string","null"]}
+                    }),
+                    vec![
+                        "body",
+                        "reason",
+                        "evidence",
+                        "author",
+                        "claim_type",
+                        "idempotency_key",
+                    ],
                 ),
                 "memory.retract" => (
                     "Retract a user-owned memory without deleting its body or history.",
-                    json!({"type":"object"}),
+                    json!({
+                        "id": {"type":"string"},
+                        "expected_version": {"type":"integer","minimum":1},
+                        "idempotency_key": {"type":"string"}
+                    }),
                     vec!["id", "expected_version", "idempotency_key"],
                 ),
                 "sources.refresh" => (

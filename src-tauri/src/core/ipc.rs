@@ -118,6 +118,34 @@ pub struct CoreServer {
     lock_file: Option<File>,
 }
 
+/// Keeps the single-owner lock alive while bind is in progress and removes
+/// it when bind fails before a `CoreServer` can take ownership of cleanup.
+struct OwnerLock {
+    path: PathBuf,
+    file: Option<File>,
+    armed: bool,
+}
+
+impl OwnerLock {
+    fn disarm(mut self) -> File {
+        let file = self
+            .file
+            .take()
+            .expect("owner lock file must exist until CoreServer takes ownership");
+        self.armed = false;
+        file
+    }
+}
+
+impl Drop for OwnerLock {
+    fn drop(&mut self) {
+        let _ = self.file.take();
+        if self.armed {
+            let _ = fs::remove_file(&self.path);
+        }
+    }
+}
+
 impl CoreServer {
     pub fn bind(endpoint: CoreEndpoint, core: Core, token: Option<String>) -> CoreResult<Self> {
         if endpoint.socket_path.as_os_str().is_empty() {
@@ -135,17 +163,24 @@ impl CoreServer {
             })?;
         }
         let lock_path = endpoint.socket_path.with_extension("lock");
-        let lock_file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&lock_path)
-            .map_err(|error| CoreError::Provider {
-                provider: "ipc".to_string(),
-                code: "owner_exists".to_string(),
-                message: format!("another Core owner holds the local lock: {error}"),
-                retry_at: None,
-            })?;
-        set_user_only(&lock_path)?;
+        let lock_file = open_owner_lock(&lock_path)?;
+        let mut owner_lock = OwnerLock {
+            path: lock_path,
+            file: Some(lock_file),
+            armed: true,
+        };
+        if let Some(lock_file) = owner_lock.file.as_mut() {
+            lock_file
+                .write_all(std::process::id().to_string().as_bytes())
+                .and_then(|_| lock_file.sync_all())
+                .map_err(|error| CoreError::Provider {
+                    provider: "ipc".to_string(),
+                    code: "owner_unavailable".to_string(),
+                    message: format!("could not write the Core owner lock: {error}"),
+                    retry_at: None,
+                })?;
+        }
+        set_user_only(&owner_lock.path)?;
 
         if endpoint.socket_path.exists() {
             // A live owner must never be replaced.  A stale socket is safe to
@@ -194,7 +229,7 @@ impl CoreServer {
             core,
             endpoint,
             listener,
-            lock_file: Some(lock_file),
+            lock_file: Some(owner_lock.disarm()),
         })
     }
 
@@ -503,6 +538,55 @@ fn constant_time_equal(left: &str, right: &str) -> bool {
     difference == 0
 }
 
+fn open_owner_lock(path: &Path) -> CoreResult<File> {
+    let open = || OpenOptions::new().write(true).create_new(true).open(path);
+    match open() {
+        Ok(file) => Ok(file),
+        Err(error)
+            if error.kind() == std::io::ErrorKind::AlreadyExists && !owner_lock_is_live(path) =>
+        {
+            fs::remove_file(path).map_err(|remove_error| CoreError::Provider {
+                provider: "ipc".to_string(),
+                code: "owner_exists".to_string(),
+                message: format!("stale Core lock could not be removed: {remove_error}"),
+                retry_at: None,
+            })?;
+            open().map_err(|retry_error| CoreError::Provider {
+                provider: "ipc".to_string(),
+                code: "owner_exists".to_string(),
+                message: format!("another Core owner holds the local lock: {retry_error}"),
+                retry_at: None,
+            })
+        }
+        Err(error) => Err(CoreError::Provider {
+            provider: "ipc".to_string(),
+            code: "owner_exists".to_string(),
+            message: format!("another Core owner holds the local lock: {error}"),
+            retry_at: None,
+        }),
+    }
+}
+
+fn owner_lock_is_live(path: &Path) -> bool {
+    let contents = match fs::read_to_string(path) {
+        Ok(contents) => contents,
+        Err(_) => return true,
+    };
+    let Ok(pid) = contents.trim().parse::<libc::pid_t>() else {
+        return true;
+    };
+    #[cfg(unix)]
+    {
+        let result = unsafe { libc::kill(pid, 0) };
+        result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
+        true
+    }
+}
+
 fn set_user_only(path: &Path) -> CoreResult<()> {
     fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(|error| {
         CoreError::Provider {
@@ -557,5 +641,36 @@ mod tests {
         let core = Core::in_memory().unwrap();
         let error = dispatch(&core, "database.open", Value::Null).expect_err("unknown method");
         assert!(matches!(error, CoreError::InvalidInput { field, .. } if field == "method"));
+    }
+
+    #[test]
+    fn second_owner_is_rejected_and_owner_files_are_cleaned_up() {
+        let directory = PathBuf::from(format!("/tmp/aidebook-ipc-owner-{}", Uuid::new_v4()));
+        fs::create_dir_all(&directory).unwrap();
+        let endpoint = CoreEndpoint::in_data_dir(&directory);
+        let server = CoreServer::bind(endpoint.clone(), Core::in_memory().unwrap(), None).unwrap();
+        let second = CoreServer::bind(endpoint.clone(), Core::in_memory().unwrap(), None);
+        assert!(matches!(
+            second,
+            Err(CoreError::Provider { code, .. }) if code == "owner_exists"
+        ));
+        drop(server);
+        assert!(!endpoint.socket_path.exists());
+        assert!(!endpoint.token_path.exists());
+        assert!(!endpoint.socket_path.with_extension("lock").exists());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn stale_owner_lock_is_recovered_after_an_unclean_exit() {
+        let directory = PathBuf::from(format!("/tmp/aidebook-ipc-stale-{}", Uuid::new_v4()));
+        fs::create_dir_all(&directory).unwrap();
+        let endpoint = CoreEndpoint::in_data_dir(&directory);
+        let lock_path = endpoint.socket_path.with_extension("lock");
+        fs::write(&lock_path, format!("{}\n", libc::pid_t::MAX)).unwrap();
+        let server = CoreServer::bind(endpoint.clone(), Core::in_memory().unwrap(), None)
+            .expect("stale owner lock should be recoverable");
+        drop(server);
+        fs::remove_dir_all(directory).unwrap();
     }
 }

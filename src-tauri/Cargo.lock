@@ -34,6 +34,7 @@ name = "aidebook"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "libc",
  "rusqlite",
  "serde",
  "serde_json",
