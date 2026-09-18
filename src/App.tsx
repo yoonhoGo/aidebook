@@ -120,6 +120,7 @@ const STORAGE_ACTIVITIES = "aidebook-activities-v1";
 const STORAGE_SESSION = "aidebook-session-v1";
 const STORAGE_SETTINGS = "aidebook-settings-v1";
 const STORAGE_SCOPES = "aidebook-scopes-v1";
+const STORAGE_NATIVE_SCOPES = "aidebook-native-scopes-v1";
 const DEFAULT_INSPECTOR_WIDTH = 330;
 
 function isNativeRuntime() {
@@ -285,6 +286,7 @@ function App() {
   const [activities, setActivities] = useState<Activity[]>(() => readStorage(STORAGE_ACTIVITIES, initialActivities));
   const [settings, setSettings] = useState<AppSettings>(() => readStorage(STORAGE_SETTINGS, defaultSettings));
   const [scopes, setScopes] = useState<Record<string, string>>(() => readStorage(STORAGE_SCOPES, {}));
+  const [nativeScopes, setNativeScopes] = useState<Record<string, string>>(() => readStorage(STORAGE_NATIVE_SCOPES, {}));
   const [page, setPage] = useState<Page>(() => readStorage(STORAGE_SESSION, { page: "work" as Page }).page);
   const [work, setWork] = useState(() => readStorage(STORAGE_SESSION, { work: 0 }).work);
   const [selected, setSelected] = useState(() => readStorage(STORAGE_SESSION, { selected: 1 }).selected);
@@ -340,6 +342,7 @@ function App() {
     document.body.classList.toggle("reduce-motion", settings.reduceMotion);
   }, [settings]);
   useEffect(() => { localStorage.setItem(STORAGE_SCOPES, JSON.stringify(scopes)); }, [scopes]);
+  useEffect(() => { localStorage.setItem(STORAGE_NATIVE_SCOPES, JSON.stringify(nativeScopes)); }, [nativeScopes]);
   useEffect(() => {
     localStorage.setItem(STORAGE_SESSION, JSON.stringify({ page, work, selected, tab, setting, sidebarHidden, inspectorHidden, inspectorWidth }));
     document.documentElement.style.setProperty("--inspector-width", `${inspectorWidth}px`);
@@ -420,7 +423,7 @@ function App() {
     }
     setSavingEditor(true);
     const existing = draft.id === null ? undefined : notes.find((note) => note.id === draft.id);
-    const evidence = existing?.nativeEvidence ?? draft.sources.map((sourceId) => sourceRefFor(sources.find((source) => source.id === sourceId) ?? sources[0]));
+    const evidence = draft.sources.map((sourceId) => sourceRefFor(sources.find((source) => source.id === sourceId) ?? sources[0]));
     const nativeRequest = {
       title: draft.title.trim(),
       work,
@@ -461,6 +464,7 @@ function App() {
         body: draft.body.trim(),
         kind: draft.kind,
         reason: draft.reason.trim(),
+        sources: [...draft.sources],
         time,
         nativeId: nativeMemory?.id ?? note.nativeId,
         nativeEvidence: nativeMemory?.memory.evidence ?? note.nativeEvidence ?? evidence,
@@ -649,9 +653,100 @@ function App() {
     setNotes(previous); setUndoStack((stack) => stack.slice(0, -1)); setToast("이전 메모 상태로 되돌렸습니다.");
   }
 
-  function refreshSource(source: Source) {
-    setRefreshingSource(source.id); setRefreshMessage("연결 상태 확인 중 · 마지막 캐시는 계속 볼 수 있습니다.");
-    window.setTimeout(() => { setRefreshingSource(null); setRefreshMessage("확인하지 못함 · 실제 계정에 연결되지 않았습니다. 마지막 캐시를 유지합니다."); }, 700);
+  async function selectSource(source: Source) {
+    if (!isNativeRuntime()) {
+      setToast("브라우저 데모에서는 실제 볼트·GitHub 계정을 연결하지 않습니다.");
+      return;
+    }
+    setRefreshingSource(source.id);
+    setRefreshMessage("사용자가 선택한 읽기 범위를 확인하는 중입니다.");
+    try {
+      if (source.provider === "Obsidian") {
+        const path = window.prompt("읽을 Obsidian vault 경로를 선택하세요. 자동 검색하지 않습니다.", nativeScopes.obsidian ?? "");
+        if (!path?.trim()) return;
+        const selection = await invoke<{ root_path: string }>("vault_select", {
+          input: { path: path.trim(), account_id: "selected-vault" },
+        });
+        const result = await invoke<{ scan: { snapshots: unknown[]; inaccessible: number }; changes: unknown[]; refresh: { indexed: number } }>("vault_scan");
+        setNativeScopes((current) => ({ ...current, obsidian: selection.root_path }));
+        setRefreshMessage(`선택한 vault에서 ${result.refresh.indexed}개를 색인했습니다 · 변경 ${result.changes.length}개 · 접근 불가 ${result.scan.inaccessible}개`);
+        setToast("선택한 Obsidian 범위만 코어에 저장했습니다.");
+      } else {
+        const owner = window.prompt("GitHub owner를 입력하세요.", "aidebook");
+        const repository = window.prompt("GitHub repository를 입력하세요.", "aidebook");
+        if (!owner?.trim() || !repository?.trim()) return;
+        const connectionId = `github-${owner.trim()}-${repository.trim()}`;
+        await invoke<{ scope: string }>("github_select", {
+          input: {
+            account_id: owner.trim(),
+            connection_id: connectionId,
+            owner: owner.trim(),
+            repository: repository.trim(),
+          },
+        });
+        const token = window.prompt("GitHub token을 입력하세요. 비워두면 기존 macOS Keychain credential을 사용합니다.");
+        if (token?.trim()) {
+          await invoke("github_credential_set", { input: { connection_id: connectionId, token } });
+        }
+        const result = await invoke<{ indexed: number }>("github_refresh");
+        setNativeScopes((current) => ({ ...current, github: `${owner.trim()}/${repository.trim()}` }));
+        setRefreshMessage(`선택한 ${owner.trim()}/${repository.trim()}에서 ${result.indexed}개를 색인했습니다.`);
+        setToast("선택한 GitHub 저장소만 Keychain 경계 안에서 읽었습니다.");
+      }
+    } catch (error) {
+      setRefreshMessage(`연결하지 못함 · 마지막 캐시를 유지합니다: ${String(error)}`);
+      setToast(`연결하지 못했습니다: ${String(error)}`);
+    } finally {
+      setRefreshingSource(null);
+    }
+  }
+
+  async function refreshSource(source: Source) {
+    if (!isNativeRuntime()) {
+      setRefreshingSource(source.id); setRefreshMessage("브라우저 데모 확인 중 · 실제 계정이나 vault에는 접근하지 않습니다.");
+      window.setTimeout(() => { setRefreshingSource(null); setRefreshMessage("데모 확인만 완료했습니다 · 마지막 예시 캐시를 유지합니다."); }, 700);
+      return;
+    }
+    setRefreshingSource(source.id); setRefreshMessage("선택된 범위의 마지막 상태를 확인하는 중입니다.");
+    try {
+      if (source.provider === "Obsidian") {
+        const result = await invoke<{ scan: { inaccessible: number }; changes: unknown[]; refresh: { indexed: number } }>("vault_scan");
+        setRefreshMessage(`선택된 vault ${result.refresh.indexed}개를 확인했습니다 · 변경 ${result.changes.length}개 · 접근 불가 ${result.scan.inaccessible}개`);
+      } else {
+        const result = await invoke<{ indexed: number }>("github_refresh");
+        setRefreshMessage(`선택된 GitHub 범위 ${result.indexed}개를 확인했습니다.`);
+      }
+      setToast("선택된 읽기 범위의 최신 상태를 코어에 반영했습니다.");
+    } catch (error) {
+      setRefreshMessage(`확인하지 못함 · 마지막 캐시를 유지합니다: ${String(error)}`);
+      setToast(`갱신하지 못했습니다: ${String(error)}`);
+    } finally {
+      setRefreshingSource(null);
+    }
+  }
+
+  async function disconnectSource(source: Source) {
+    if (!isNativeRuntime()) {
+      setToast("브라우저 데모에서는 실제 연결을 해제하지 않습니다.");
+      return;
+    }
+    if (source.provider !== "GitHub" || !nativeScopes.github) {
+      setToast("해제할 GitHub 선택 범위가 없습니다.");
+      return;
+    }
+    const connectionId = `github-${nativeScopes.github.replace("/", "-")}`;
+    const deleteCredential = window.confirm("선택한 GitHub credential도 macOS Keychain에서 삭제할까요?");
+    try {
+      await invoke("github_disconnect", { input: { connection_id: connectionId, delete_credential: deleteCredential } });
+      setNativeScopes((current) => {
+        const next = { ...current };
+        delete next.github;
+        return next;
+      });
+      setToast(deleteCredential ? "GitHub 연결과 credential을 해제했습니다." : "GitHub 선택 범위만 해제했습니다. credential은 보존했습니다.");
+    } catch (error) {
+      setToast(`연결을 해제하지 못했습니다: ${String(error)}`);
+    }
   }
 
   function setSetting<K extends keyof AppSettings>(key: K, value: AppSettings[K]) { setSettings((current) => ({ ...current, [key]: value })); setToast("설정을 저장했습니다."); }
@@ -713,7 +808,7 @@ function App() {
   }
 
   function ConnectionsPage() {
-    return <div className="page"><section className="section overview-section"><div className="container"><p className="eyebrow">수집과 최신성</p><h1>연결 상태</h1><p className="muted">무엇을 읽는지, 언제 확인했는지 살펴봅니다.</p><div className="notice"><strong>읽기 전용 경계</strong><br />현재는 캐시된 예시 자료만 보여줍니다. 외부 계정이나 원본 데이터에는 접근하지 않습니다.{refreshMessage && <span className="status-inline">{refreshMessage}</span>}</div><div className="connection-list">{sources.map((source) => <article className="card connection-card" key={source.id}><div className="row-between"><div className="source-heading"><span className={`provider provider-${source.provider.toLowerCase()}`}>{source.provider[0]}</span><h2>{source.provider}</h2></div><span className="tag">{source.stale ? "갱신 실패" : "캐시 유지"}</span></div><p>{source.provider === "GitHub" ? "선택한 저장소의 이슈·PR·리뷰" : "허용한 볼트의 Markdown 문서"}</p><p className="small muted">마지막 성공 {source.time} · 읽기 전용</p><div className="card-actions"><button className="btn btn-secondary" type="button" onClick={() => setDetail({ type: "scope", source })}>수집 범위</button><button className="btn btn-ghost" type="button" disabled={refreshingSource === source.id} onClick={() => refreshSource(source)}>{refreshingSource === source.id ? "확인 중…" : "다시 확인"}</button></div></article>)}</div><p className="small muted">Jira, Slack, Google, Confluence는 후속 연결 대상으로 계획되어 있습니다.</p></div></section></div>;
+    return <div className="page"><section className="section overview-section"><div className="container"><p className="eyebrow">수집과 최신성</p><h1>연결 상태</h1><p className="muted">무엇을 읽는지, 언제 확인했는지 살펴봅니다.</p><div className="notice"><strong>읽기 전용 경계</strong><br />브라우저 데모는 예시 캐시만 보여줍니다. 네이티브 앱에서는 사용자가 선택한 vault 또는 저장소만 연결하며 자동 검색하지 않습니다.{refreshMessage && <span className="status-inline">{refreshMessage}</span>}</div><div className="connection-list">{sources.map((source) => <article className="card connection-card" key={source.id}><div className="row-between"><div className="source-heading"><span className={`provider provider-${source.provider.toLowerCase()}`}>{source.provider[0]}</span><h2>{source.provider}</h2></div><span className="tag">{source.stale ? "갱신 실패" : "캐시 유지"}</span></div><p>{source.provider === "GitHub" ? "선택한 저장소의 이슈·PR·리뷰" : "허용한 볼트의 Markdown 문서"}</p><p className="small muted">마지막 성공 {source.time} · 읽기 전용</p>{nativeScopes[source.provider === "GitHub" ? "github" : "obsidian"] && <p className="small muted">현재 선택: {nativeScopes[source.provider === "GitHub" ? "github" : "obsidian"]}</p>}<div className="card-actions"><button className="btn btn-secondary" type="button" onClick={() => { void selectSource(source); }}>범위 선택 및 연결</button><button className="btn btn-ghost" type="button" onClick={() => setDetail({ type: "scope", source })}>수집 범위</button><button className="btn btn-ghost" type="button" disabled={refreshingSource === source.id} onClick={() => { void refreshSource(source); }}>{refreshingSource === source.id ? "확인 중…" : "다시 확인"}</button>{source.provider === "GitHub" && nativeScopes.github && <button className="btn btn-ghost" type="button" onClick={() => { void disconnectSource(source); }}>연결 해제</button>}</div></article>)}</div><p className="small muted">Jira, Slack, Google, Confluence는 후속 연결 대상으로 계획되어 있습니다.</p></div></section></div>;
   }
 
   function SettingsPage() {

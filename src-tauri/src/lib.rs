@@ -4,16 +4,22 @@ use core::{
     ContextRequest, Core, CoreEndpoint, CoreError, CoreServer, CredentialStore, GitHubAdapter,
     GitHubConfig, HttpGitHubApi, KeychainCredentialStore, MemoryRestoreInput, MemoryRetractInput,
     MemoryUpsertInput, ObsidianAdapter, ReadOnlyConnector, RelationInput, SearchRequest, Snapshot,
-    SourceRef, SourcesRefreshResult, UiMemoryUpsertInput, VaultConfig, VaultScanResult,
+    SourceRef, SourcesRefreshResult, UiMemoryUpsertInput, VaultChange, VaultConfig,
+    VaultScanResult, VaultWatcher,
 };
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::sync::Mutex;
-use tauri::{Manager, State};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
+use tauri::{Manager, State, WindowEvent};
 
 struct AppState {
     core: Core,
+    core_stop: Arc<AtomicBool>,
     vault: Mutex<Option<ObsidianAdapter>>,
+    vault_watcher: Mutex<Option<VaultWatcher>>,
     github: Mutex<Option<GitHubAdapter<HttpGitHubApi, KeychainCredentialStore>>>,
 }
 
@@ -29,6 +35,7 @@ struct VaultSelection {
 #[derive(Debug, Clone, Serialize)]
 struct VaultScanResponse {
     scan: VaultScanResult,
+    changes: Vec<VaultChange>,
     refresh: SourcesRefreshResult,
 }
 
@@ -101,10 +108,18 @@ fn vault_select(
         provider: "obsidian",
         read_only: true,
     };
+    let watcher = adapter.clone().watcher()?;
     let mut vault = state.vault.lock().map_err(|_| CoreError::Database {
         message: "vault state mutex was poisoned".to_string(),
     })?;
     *vault = Some(adapter);
+    let mut vault_watcher = state
+        .vault_watcher
+        .lock()
+        .map_err(|_| CoreError::Database {
+            message: "vault watcher mutex was poisoned".to_string(),
+        })?;
+    *vault_watcher = Some(watcher);
     Ok(selection)
 }
 
@@ -122,8 +137,21 @@ fn vault_scan(state: State<'_, AppState>) -> Result<VaultScanResponse, CoreError
             message: "select a vault before scanning".to_string(),
         })?;
     let scan = adapter.scan()?;
+    let changes = state
+        .vault_watcher
+        .lock()
+        .map_err(|_| CoreError::Database {
+            message: "vault watcher mutex was poisoned".to_string(),
+        })?
+        .as_mut()
+        .map(|watcher| watcher.observe(scan.clone()))
+        .unwrap_or_default();
     let refresh = state.core.sources_refresh(&adapter)?;
-    Ok(VaultScanResponse { scan, refresh })
+    Ok(VaultScanResponse {
+        scan,
+        changes,
+        refresh,
+    })
 }
 
 #[tauri::command]
@@ -345,6 +373,13 @@ fn core_restore(path: String, state: State<'_, AppState>) -> Result<core::Backup
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .on_window_event(|window, event| {
+            if matches!(event, WindowEvent::Destroyed) {
+                if let Some(state) = window.try_state::<AppState>() {
+                    state.core_stop.store(true, Ordering::Relaxed);
+                }
+            }
+        })
         .setup(|app| {
             let data_dir = app.path().app_data_dir().map_err(|error| {
                 Box::new(std::io::Error::other(format!(
@@ -357,13 +392,17 @@ pub fn run() {
             let endpoint = CoreEndpoint::in_data_dir(&data_dir);
             let server = CoreServer::bind(endpoint.clone(), core.clone(), None)
                 .map_err(|error| Box::new(error) as Box<dyn std::error::Error>)?;
+            let core_stop = Arc::new(AtomicBool::new(false));
+            let core_stop_for_server = core_stop.clone();
             std::thread::spawn(move || {
-                let _ = server.serve();
+                let _ = server.serve_until(core_stop_for_server);
             });
             app.manage(endpoint);
             app.manage(AppState {
                 core,
+                core_stop,
                 vault: Mutex::new(None),
+                vault_watcher: Mutex::new(None),
                 github: Mutex::new(None),
             });
             Ok(())

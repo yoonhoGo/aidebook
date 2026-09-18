@@ -377,11 +377,16 @@ impl VaultIndex {
 }
 
 impl VaultWatcher {
-    pub fn poll(&mut self) -> CoreResult<(VaultScanResult, Vec<VaultChange>)> {
-        let scan = self.adapter.scan()?;
+    pub fn observe(&mut self, scan: VaultScanResult) -> Vec<VaultChange> {
         let next = VaultIndex::from_scan(&scan);
         let changes = self.previous.diff(&next);
         self.previous = next;
+        changes
+    }
+
+    pub fn poll(&mut self) -> CoreResult<(VaultScanResult, Vec<VaultChange>)> {
+        let scan = self.adapter.scan()?;
+        let changes = self.observe(scan.clone());
         Ok((scan, changes))
     }
 }

@@ -77,8 +77,9 @@ impl CredentialStore for MemoryCredentialStore {
     }
 }
 
-/// macOS Keychain adapter.  The token is passed to the `security` process only
-/// for the write operation and is never included in an error or debug value.
+/// macOS Keychain adapter.  The token is written to the `security` process's
+/// stdin prompt, never placed in argv, and is never included in an error or
+/// debug value.
 #[derive(Debug, Clone, Default)]
 pub struct KeychainCredentialStore;
 
@@ -143,7 +144,7 @@ impl CredentialStore for KeychainCredentialStore {
         }
         #[cfg(target_os = "macos")]
         {
-            let status = Command::new("/usr/bin/security")
+            let mut child = Command::new("/usr/bin/security")
                 .args([
                     "add-generic-password",
                     "-U",
@@ -152,9 +153,25 @@ impl CredentialStore for KeychainCredentialStore {
                     "-a",
                     "aidebook",
                     "-w",
-                    token,
                 ])
-                .status()
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .map_err(|error| Self::unavailable(format!("security command failed: {error}")))?;
+            if let Some(mut stdin) = child.stdin.take() {
+                if stdin
+                    .write_all(token.as_bytes())
+                    .and_then(|_| stdin.write_all(b"\n"))
+                    .is_err()
+                {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(Self::unavailable("Keychain prompt could not be completed"));
+                }
+            }
+            let status = child
+                .wait()
                 .map_err(|error| Self::unavailable(format!("security command failed: {error}")))?;
             if status.success() {
                 return Ok(());
