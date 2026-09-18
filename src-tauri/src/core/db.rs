@@ -139,6 +139,21 @@ const MIGRATIONS: &[(i64, &str)] = &[
         ALTER TABLE snapshots ADD COLUMN links_json TEXT NOT NULL DEFAULT '[]';
         "#,
     ),
+    (
+        4,
+        r#"
+        CREATE TABLE IF NOT EXISTS ui_memories (
+            memory_id TEXT PRIMARY KEY NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+            title TEXT NOT NULL,
+            work INTEGER NOT NULL CHECK (work >= 0),
+            kind TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_ui_memories_work_updated
+            ON ui_memories(work, updated_at DESC);
+        "#,
+    ),
 ];
 
 #[derive(Debug)]
@@ -349,6 +364,38 @@ impl Database {
             )
             .map_err(database_error)?;
         transaction.commit().map_err(database_error)
+    }
+
+    pub fn remove_relation(&self, input: RelationInput) -> CoreResult<bool> {
+        input.from.validate()?;
+        input.to.validate()?;
+        if input.relation_type.trim().is_empty() {
+            return Err(CoreError::InvalidInput {
+                field: "relation_type".to_string(),
+                message: "must not be empty".to_string(),
+            });
+        }
+        let mut connection = self.lock()?;
+        let transaction = connection.transaction().map_err(database_error)?;
+        let from_id =
+            find_source_id(&transaction, &input.from)?.ok_or_else(|| CoreError::NotFound {
+                entity: "source".to_string(),
+                id: input.from.id(),
+            })?;
+        let to_id =
+            find_source_id(&transaction, &input.to)?.ok_or_else(|| CoreError::NotFound {
+                entity: "source".to_string(),
+                id: input.to.id(),
+            })?;
+        let removed = transaction
+            .execute(
+                "DELETE FROM relations
+                 WHERE from_source_id = ?1 AND to_source_id = ?2 AND relation_type = ?3",
+                params![from_id, to_id, input.relation_type],
+            )
+            .map_err(database_error)?;
+        transaction.commit().map_err(database_error)?;
+        Ok(removed > 0)
     }
 
     pub fn search(&self, request: SearchRequest) -> CoreResult<SearchResponse> {
@@ -965,6 +1012,77 @@ impl Database {
         Ok(mutation)
     }
 
+    pub fn ui_memory_upsert(&self, input: UiMemoryUpsertInput) -> CoreResult<UiMemoryMutation> {
+        validate_ui_memory_input(&input)?;
+        let UiMemoryUpsertInput {
+            title,
+            work,
+            kind,
+            memory,
+        } = input;
+        let mutation = self.upsert_memory(memory)?;
+        let now = now_rfc3339();
+        let connection = self.lock()?;
+        connection
+            .execute(
+                "INSERT INTO ui_memories(memory_id, title, work, kind, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT(memory_id) DO UPDATE SET
+                    title = excluded.title,
+                    work = excluded.work,
+                    kind = excluded.kind,
+                    updated_at = excluded.updated_at",
+                params![mutation.memory.id, title, work, kind, now, now,],
+            )
+            .map_err(database_error)?;
+        let ui_memory = load_ui_memory(&connection, &mutation.memory.id)?;
+        Ok(UiMemoryMutation {
+            memory: ui_memory,
+            created: mutation.created,
+            idempotent_replay: mutation.idempotent_replay,
+            action: mutation.action,
+        })
+    }
+
+    pub fn ui_memory_retract(&self, input: MemoryRetractInput) -> CoreResult<UiMemoryMutation> {
+        let mutation = self.retract_memory(input)?;
+        let connection = self.lock()?;
+        Ok(UiMemoryMutation {
+            memory: load_ui_memory(&connection, &mutation.memory.id)?,
+            created: false,
+            idempotent_replay: mutation.idempotent_replay,
+            action: mutation.action,
+        })
+    }
+
+    pub fn ui_memory_restore(&self, input: MemoryRestoreInput) -> CoreResult<UiMemoryMutation> {
+        let mutation = self.restore_memory(input)?;
+        let connection = self.lock()?;
+        Ok(UiMemoryMutation {
+            memory: load_ui_memory(&connection, &mutation.memory.id)?,
+            created: false,
+            idempotent_replay: mutation.idempotent_replay,
+            action: mutation.action,
+        })
+    }
+
+    pub fn ui_memories(&self) -> CoreResult<Vec<UiMemory>> {
+        let connection = self.lock()?;
+        let mut statement = connection
+            .prepare("SELECT memory_id FROM ui_memories ORDER BY updated_at DESC")
+            .map_err(database_error)?;
+        let ids = statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(database_error)?;
+        let ids = ids.collect::<Result<Vec<_>, _>>().map_err(database_error)?;
+        drop(statement);
+        let mut memories = Vec::new();
+        for id in ids {
+            memories.push(load_ui_memory(&connection, &id)?);
+        }
+        Ok(memories)
+    }
+
     pub fn memory(&self, id: &str) -> CoreResult<Memory> {
         let connection = self.lock()?;
         load_memory(&connection, id)
@@ -1269,6 +1387,37 @@ where
     })
 }
 
+fn load_ui_memory<C>(connection: &C, memory_id: &str) -> CoreResult<UiMemory>
+where
+    C: Deref<Target = Connection>,
+{
+    let row = connection
+        .query_row(
+            "SELECT title, work, kind FROM ui_memories WHERE memory_id = ?1",
+            params![memory_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(database_error)?
+        .ok_or_else(|| CoreError::NotFound {
+            entity: "ui memory".to_string(),
+            id: memory_id.to_string(),
+        })?;
+    Ok(UiMemory {
+        id: memory_id.to_string(),
+        title: row.0,
+        work: row.1,
+        kind: row.2,
+        memory: load_memory(connection, memory_id)?,
+    })
+}
+
 fn source_ids_for_memory(
     transaction: &Transaction<'_>,
     evidence: &[SourceRef],
@@ -1463,6 +1612,28 @@ fn validate_memory_input(input: &MemoryUpsertInput) -> CoreResult<()> {
         }
     }
     Ok(())
+}
+
+fn validate_ui_memory_input(input: &UiMemoryUpsertInput) -> CoreResult<()> {
+    if input.title.trim().is_empty() {
+        return Err(CoreError::InvalidInput {
+            field: "title".to_string(),
+            message: "must not be empty".to_string(),
+        });
+    }
+    if input.title.chars().count() > 100 {
+        return Err(CoreError::InvalidInput {
+            field: "title".to_string(),
+            message: "must be at most 100 characters".to_string(),
+        });
+    }
+    if input.work < 0 || input.kind.trim().is_empty() {
+        return Err(CoreError::InvalidInput {
+            field: "work/kind".to_string(),
+            message: "work must be non-negative and kind is required".to_string(),
+        });
+    }
+    validate_memory_input(&input.memory)
 }
 
 fn request_digest<T: Serialize>(value: &T) -> CoreResult<String> {

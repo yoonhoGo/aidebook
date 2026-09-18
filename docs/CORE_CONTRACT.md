@@ -1,4 +1,4 @@
-# Aidebook M0 core contract
+# Aidebook local core contract
 
 이 문서는 `비서의 노트 MVP 설계.md`의 구체적인 MVP 규칙을 Rust 코어에
 고정한다. M0의 코어는 UI·CLI·MCP가 함께 사용할 transport-neutral API와
@@ -17,8 +17,9 @@ React/Tauri UI ─┐
 `Core`만 DB를 열고 변경한다. UI는 현재 `localStorage`를 계속 사용하며,
 M0에서 자동으로 DB로 가져오거나 기존 UI 데이터를 삭제하지 않는다. 외부
 자료는 읽기 전용·비신뢰 데이터이고 외부 서비스에 쓰는 메서드나 토큰 필드는
-계약에 없다. 향후 Tauri IPC, CLI, MCP는 이 API를 호출하는 얇은 transport로
-추가한다. 각각이 DB를 직접 열 수 없다.
+계약에 없다. 사용자가 명시적으로 선택한 provider 범위만 adapter가 읽는다.
+Tauri IPC, CLI, MCP는 이 API를 호출하는 얇은 transport이며 각각이 DB를 직접
+열 수 없다.
 
 ## 공통 모델
 
@@ -78,6 +79,11 @@ Relation은 명시적인 SourceRef 사이의 링크와 이유만 저장한다. M
 않는다. 접근 불가 근거는 `unavailable_sources`와 `missing_providers`에
 남고, 메모 본문은 그대로 반환된다.
 
+`relation_add`와 `relation_remove`는 URL·외부 ID·wikilink를 사용자가 명시한
+경우에만 관계를 만들고 해제한다. Obsidian에서 발견한 link는 후보 metadata일
+뿐 자동 관계가 아니다. UI 메모는 `ui_memories`가 title/work/kind를 Core
+Memory와 함께 보존하며 Core commit 뒤에만 저장 성공으로 보고한다.
+
 ### SyncState
 
 연결별 `last_success_at`, `last_attempt_at`, 실패 시각·코드·사유,
@@ -89,13 +95,14 @@ cursor를 지우지 않는다. 이는 “실패했지만 이전 캐시를 최신
 
 `src-tauri/src/core/mod.rs`의 `Core`가 현재 구현한 호출은 다음과 같다.
 
-| 계약 | Rust API | M0 동작 |
+| 계약 | Rust API | 동작 |
 | --- | --- | --- |
 | `context.search` | `Core::context_search(SearchRequest)` | FTS5 키워드·provider/kind·기간·freshness·limit |
 | `context.get` | `Core::context_get(ContextRequest)` | 명시 SourceRef/ID와 relation, 근거 메모 |
 | `memory.upsert` | `Core::memory_upsert(MemoryUpsertInput)` | 생성·수정·멱등성·근거 검증 |
 | `memory.retract` | `Core::memory_retract(MemoryRetractInput)` | versioned 철회 |
 | `memory.restore` | `Core::restore_memory(MemoryRestoreInput)` | revision 기반 복원 |
+| `ui_memory.upsert` | `Core::ui_memory_upsert(UiMemoryUpsertInput)` | title/work/kind와 Core Memory commit |
 | `sources.refresh` | `Core::sources_refresh(ReadOnlyConnector)` | 읽기 전용 snapshot ingest + SyncState |
 | `connections.status` | `Core::connections_status` | 마지막 성공과 실패 상태 조회 |
 
@@ -112,6 +119,8 @@ transaction에서 적용한다.
 - v1: `sources`, `snapshots`, FTS5 `snapshot_fts`, `relations`,
   `sync_states`, `memories`, `memory_evidence`
 - v2: `memory_revisions`, `idempotency_records`
+- v3: snapshot metadata/explicit link JSON
+- v4: `ui_memories` presentation metadata linked to Core Memory
 
 마이그레이션 SQL, version 기록, commit이 하나의 transaction에 들어가므로
 실패하면 해당 version과 새 테이블이 함께 rollback된다. 외래 키를 켜며,

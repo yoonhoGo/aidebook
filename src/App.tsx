@@ -34,7 +34,43 @@ type Note = {
   reason: string;
   sources: number[];
   version?: number;
+  nativeId?: string;
+  nativeEvidence?: CoreSourceRef[];
+  retracted?: boolean;
   previous?: NoteRevision;
+};
+
+type CoreSourceRef = {
+  provider: string;
+  account_id: string;
+  external_id: string;
+  url: string;
+  kind: string;
+};
+
+type NativeUiMemory = {
+  id: string;
+  title: string;
+  work: number;
+  kind: string;
+  memory: {
+    id: string;
+    body: string;
+    reason: string;
+    evidence: CoreSourceRef[];
+    author: string;
+    claim_type: string;
+    version: number;
+    retracted_at: string | null;
+    updated_at: string;
+  };
+};
+
+type NativeUiMemoryMutation = {
+  memory: NativeUiMemory;
+  created: boolean;
+  idempotent_replay: boolean;
+  action: string;
 };
 
 type Source = {
@@ -69,6 +105,8 @@ type EditorState = {
   title: string;
   body: string;
   kind: NoteKind;
+  reason: string;
+  sources: number[];
 };
 
 type DetailState =
@@ -83,6 +121,30 @@ const STORAGE_SESSION = "aidebook-session-v1";
 const STORAGE_SETTINGS = "aidebook-settings-v1";
 const STORAGE_SCOPES = "aidebook-scopes-v1";
 const DEFAULT_INSPECTOR_WIDTH = 330;
+
+function isNativeRuntime() {
+  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
+function idempotencyKey(prefix: string) {
+  const suffix = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `${Date.now()}`;
+  return `${prefix}-${suffix}`;
+}
+
+function sourceRefFor(source: Source): CoreSourceRef {
+  const provider = source.provider === "GitHub" ? "github" : "obsidian";
+  return {
+    provider,
+    account_id: "ui-selected-scope",
+    external_id: `${provider}/ui/${source.id}`,
+    url: provider === "github" ? `https://github.com/aidebook/ui/${source.id}` : `obsidian://open?file=ui-${source.id}`,
+    kind: provider === "github" ? "issue" : "note",
+  };
+}
+
+function noteKindFromCore(kind: string): NoteKind {
+  return noteKinds.includes(kind as NoteKind) ? kind as NoteKind : kind === "inferred" ? "후보" : "결정";
+}
 
 const works = ["첫 번째 릴리스", "로컬 코어 설계", "커넥터 조사"];
 const settingCategories: SettingCategory[] = ["일반", "모양", "플러그인", "에이전트 연결", "메모와 데이터", "동기화", "업데이트와 진단"];
@@ -234,6 +296,7 @@ function App() {
   const [detail, setDetail] = useState<DetailState>(null);
   const [undoStack, setUndoStack] = useState<Note[][]>([]);
   const [toast, setToast] = useState<string | null>(null);
+  const [savingEditor, setSavingEditor] = useState(false);
   const [refreshingSource, setRefreshingSource] = useState<number | null>(null);
   const [refreshMessage, setRefreshMessage] = useState<string | null>(null);
   const [sidebarHidden, setSidebarHidden] = useState(() => readStorage(STORAGE_SESSION, { sidebarHidden: false }).sidebarHidden);
@@ -244,6 +307,29 @@ function App() {
 
   useEffect(() => {
     void invoke<CoreStatus>("core_status").then(setStatus).catch(() => setStatus(null));
+  }, []);
+
+  useEffect(() => {
+    if (!isNativeRuntime()) return;
+    void invoke<NativeUiMemory[]>("ui_memory_list").then((records) => {
+      if (!records.length) return;
+      const loaded = records.map((record, index): Note => ({
+        id: -index - 1,
+        work: record.work,
+        kind: noteKindFromCore(record.kind),
+        title: record.title,
+        body: record.memory.body,
+        author: record.memory.author,
+        time: new Intl.DateTimeFormat("ko-KR", { hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(record.memory.updated_at)),
+        reason: record.memory.reason,
+        sources: record.memory.evidence.map((evidence) => sources.find((source) => source.provider.toLowerCase() === evidence.provider)?.id ?? -1).filter((id) => id >= 0),
+        nativeId: record.id,
+        nativeEvidence: record.memory.evidence,
+        version: record.memory.version,
+        retracted: Boolean(record.memory.retracted_at),
+      }));
+      setNotes((current) => [...loaded, ...current.filter((note) => !note.nativeId)]);
+    }).catch(() => undefined);
   }, []);
 
   useEffect(() => { localStorage.setItem(STORAGE_NOTES, JSON.stringify(notes)); }, [notes]);
@@ -283,7 +369,7 @@ function App() {
   }, [toast]);
 
   const selectedNote = notes.find((note) => note.id === selected) ?? notes.find((note) => note.work === work) ?? notes[0];
-  const activeWorkNotes = useMemo(() => notes.filter((note) => note.work === work), [notes, work]);
+  const activeWorkNotes = useMemo(() => notes.filter((note) => note.work === work && !note.retracted), [notes, work]);
   const noteCount = activeWorkNotes.length;
   const candidateCount = activeWorkNotes.filter((note) => note.kind === "후보").length;
 
@@ -307,32 +393,211 @@ function App() {
 
   function openEditor(id?: number) {
     const note = id ? notes.find((item) => item.id === id) : undefined;
-    setEditor(note ? { id: note.id, title: note.title, body: note.body, kind: note.kind } : { id: null, title: "", body: "", kind: "결정" });
+    setEditor(note ? {
+      id: note.id,
+      title: note.title,
+      body: note.body,
+      kind: note.kind,
+      reason: note.reason,
+      sources: note.sources,
+    } : {
+      id: null,
+      title: "",
+      body: "",
+      kind: "결정",
+      reason: "현재 작업에서 다시 참고하기 위해 직접 기록했습니다.",
+      sources: sources.map((source) => source.id),
+    });
   }
 
-  function saveEditor(event: FormEvent<HTMLFormElement>) {
+  async function saveEditor(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!editor || !editor.title.trim() || !editor.body.trim()) return;
+    const draft = editor;
+    if (!draft || !draft.title.trim() || !draft.body.trim() || !draft.reason.trim()) return;
+    if (!draft.sources.length) {
+      setToast("메모를 저장하려면 근거를 하나 이상 선택하세요.");
+      return;
+    }
+    setSavingEditor(true);
+    const existing = draft.id === null ? undefined : notes.find((note) => note.id === draft.id);
+    const evidence = existing?.nativeEvidence ?? draft.sources.map((sourceId) => sourceRefFor(sources.find((source) => source.id === sourceId) ?? sources[0]));
+    const nativeRequest = {
+      title: draft.title.trim(),
+      work,
+      kind: draft.kind,
+      memory: {
+        id: existing?.nativeId,
+        body: draft.body.trim(),
+        reason: draft.reason.trim(),
+        evidence,
+        author: existing?.author ?? "user",
+        claim_type: draft.kind === "후보" ? "inferred" : "explicit",
+        idempotency_key: idempotencyKey("ui-upsert"),
+        expected_version: existing?.nativeId ? existing.version ?? 1 : undefined,
+        supersedes_id: undefined,
+      },
+    };
+    let mutation: NativeUiMemoryMutation | undefined;
+    try {
+      mutation = await invoke<NativeUiMemoryMutation>("ui_memory_upsert", { request: nativeRequest });
+    } catch (error) {
+      if (isNativeRuntime()) {
+        setSavingEditor(false);
+        setToast(`코어 저장에 실패했습니다: ${String(error)}`);
+        return;
+      }
+    }
     setUndoStack((stack) => [...stack, structuredClone(notes)].slice(-10));
     const time = nowLabel();
-    if (editor.id !== null) {
-      const existing = notes.find((note) => note.id === editor.id);
-      if (!existing) return;
-      setNotes((current) => current.map((note) => note.id === editor.id ? { ...note, title: editor.title.trim(), body: editor.body.trim(), kind: editor.kind, time, version: (note.version ?? 1) + 1, previous: { title: note.title, body: note.body, kind: note.kind, author: note.author, reason: note.reason } } : note));
-      pushActivity("메모를 수정했습니다", editor.title.trim()); setToast("메모를 수정했습니다.");
+    const nativeMemory = mutation?.memory;
+    if (draft.id !== null) {
+      if (!existing) {
+        setSavingEditor(false);
+        return;
+      }
+      setNotes((current) => current.map((note) => note.id === draft.id ? {
+        ...note,
+        title: draft.title.trim(),
+        body: draft.body.trim(),
+        kind: draft.kind,
+        reason: draft.reason.trim(),
+        time,
+        nativeId: nativeMemory?.id ?? note.nativeId,
+        nativeEvidence: nativeMemory?.memory.evidence ?? note.nativeEvidence ?? evidence,
+        version: nativeMemory?.memory.version ?? (note.version ?? 1) + 1,
+        previous: { title: note.title, body: note.body, kind: note.kind, author: note.author, reason: note.reason },
+      } : note));
+      pushActivity("메모를 수정했습니다", draft.title.trim());
     } else {
       const nextId = Math.max(0, ...notes.map((note) => note.id)) + 1;
-      const next: Note = { id: nextId, work, kind: editor.kind, title: editor.title.trim(), body: editor.body.trim(), author: "내가 작성", time, reason: "현재 작업 묶음에서 직접 기록했습니다.", sources: [] };
+      const next: Note = {
+        id: nextId,
+        work,
+        kind: draft.kind,
+        title: draft.title.trim(),
+        body: draft.body.trim(),
+        author: "내가 작성",
+        time,
+        reason: draft.reason.trim(),
+        sources: draft.sources,
+        nativeId: nativeMemory?.id,
+        nativeEvidence: nativeMemory?.memory.evidence ?? evidence,
+        version: nativeMemory?.memory.version,
+      };
       setNotes((current) => [next, ...current]); setSelected(nextId); pushActivity("새 메모를 기록했습니다", next.title); setToast("새 메모를 저장했습니다.");
     }
     setEditor(null);
+    setSavingEditor(false);
+    if (mutation) setToast("코어에 저장했습니다.");
+    else setToast("브라우저 데모에 저장했습니다. 네이티브 코어에는 아직 기록하지 않았습니다.");
   }
 
-  function restoreNote(note: Note) {
+  async function restoreNote(note: Note) {
     if (!note.previous) return;
+    if (note.nativeId && isNativeRuntime()) {
+      try {
+        const mutation = await invoke<NativeUiMemoryMutation>("ui_memory_restore", {
+          request: {
+            id: note.nativeId,
+            expected_version: note.version ?? 1,
+            revision_version: Math.max(1, (note.version ?? 2) - 1),
+            idempotency_key: idempotencyKey("ui-restore"),
+          },
+        });
+        setUndoStack((stack) => [...stack, structuredClone(notes)].slice(-10));
+        setNotes((current) => current.map((item) => item.id === note.id ? {
+          ...item,
+          title: mutation.memory.title,
+          body: mutation.memory.memory.body,
+          reason: mutation.memory.memory.reason,
+          author: mutation.memory.memory.author,
+          time: nowLabel(),
+          version: mutation.memory.memory.version,
+          nativeEvidence: mutation.memory.memory.evidence,
+          previous: { title: item.title, body: item.body, kind: item.kind, author: item.author, reason: item.reason },
+          retracted: false,
+        } : item));
+        pushActivity("메모를 이전 버전으로 복원했습니다", mutation.memory.title);
+        setDetail(null);
+        setToast("코어에 이전 버전을 새 버전으로 복원했습니다.");
+      } catch (error) {
+        setToast(`복원하지 못했습니다: ${String(error)}`);
+      }
+      return;
+    }
     setUndoStack((stack) => [...stack, structuredClone(notes)].slice(-10));
     setNotes((current) => current.map((item) => item.id === note.id ? { ...item, title: note.previous!.title, body: note.previous!.body, kind: note.previous!.kind, author: note.previous!.author, reason: note.previous!.reason, time: nowLabel(), version: (item.version ?? 1) + 1, previous: { title: item.title, body: item.body, kind: item.kind, author: item.author, reason: item.reason } } : item));
     pushActivity("메모를 이전 버전으로 복원했습니다", note.previous.title); setDetail(null); setToast("이전 내용을 새 버전으로 복원했습니다.");
+  }
+
+  async function retractNote(note: Note) {
+    if (note.nativeId && isNativeRuntime()) {
+      try {
+        const mutation = await invoke<NativeUiMemoryMutation>("ui_memory_retract", {
+          request: {
+            id: note.nativeId,
+            expected_version: note.version ?? 1,
+            idempotency_key: idempotencyKey("ui-retract"),
+          },
+        });
+        setNotes((current) => current.map((item) => item.id === note.id ? { ...item, version: mutation.memory.memory.version, retracted: true } : item));
+        setToast("코어에서 메모를 철회했습니다. 본문과 이력은 보존됩니다.");
+      } catch (error) {
+        setToast(`철회하지 못했습니다: ${String(error)}`);
+      }
+      return;
+    }
+    setNotes((current) => current.map((item) => item.id === note.id ? { ...item, retracted: true } : item));
+    setToast(isNativeRuntime() ? "먼저 이 메모를 코어로 가져와야 철회할 수 있습니다." : "브라우저 데모에서 메모를 철회했습니다.");
+  }
+
+  async function importLocalNotes() {
+    if (!isNativeRuntime()) {
+      setToast("이 브라우저 화면은 데모 저장만 지원합니다. 네이티브 앱에서 가져오기를 실행하세요.");
+      return;
+    }
+    let imported = 0;
+    const importedById = new Map<number, NativeUiMemoryMutation>();
+    for (const note of notes) {
+      if (note.nativeId || note.retracted || !note.sources.length) continue;
+      const evidence = note.nativeEvidence ?? note.sources.map((sourceId) => sourceRefFor(sources.find((source) => source.id === sourceId) ?? sources[0]));
+      try {
+        const mutation = await invoke<NativeUiMemoryMutation>("ui_memory_upsert", {
+          request: {
+            title: note.title,
+            work: note.work,
+            kind: note.kind,
+            memory: {
+              body: note.body,
+              reason: note.reason,
+              evidence,
+              author: note.author,
+              claim_type: note.kind === "후보" ? "inferred" : "explicit",
+              idempotency_key: idempotencyKey(`ui-import-${note.id}`),
+            },
+          },
+        });
+        importedById.set(note.id, mutation);
+        imported += 1;
+      } catch (error) {
+        setToast(`가져오기를 중단했습니다 (${imported}개 저장): ${String(error)}`);
+        break;
+      }
+    }
+    if (importedById.size) {
+      setNotes((current) => current.map((note) => {
+        const mutation = importedById.get(note.id);
+        return mutation ? {
+          ...note,
+          nativeId: mutation.memory.id,
+          nativeEvidence: mutation.memory.memory.evidence,
+          version: mutation.memory.memory.version,
+        } : note;
+      }));
+      setToast(`${imported}개 로컬 메모를 코어로 가져왔습니다. 기존 localStorage 데이터는 삭제하지 않았습니다.`);
+    } else if (imported === 0) {
+      setToast("가져올 메모가 없거나 근거가 선택되지 않았습니다.");
+    }
   }
 
   function undoChange() {
@@ -394,12 +659,12 @@ function App() {
   }
 
   function OverviewPage({ title }: { title: string }) {
-    return <div className="page"><section className="section overview-section"><div className="container"><p className="eyebrow">개인 작업 공간</p><h1>{title}</h1><p className="muted">{page === "home" ? "작업을 다시 시작하는 데 필요한 맥락이 여기 있습니다." : "로컬 메모와 출처, 저장 이유를 함께 확인하세요."}</p>{page === "home" ? <><div className="subhead">최근 작업 묶음</div><div className="overview-work-list">{works.map((name, index) => <button className="overview-work" type="button" key={name} onClick={() => chooseWork(index)}><span className="work-number">0{index + 1}</span><span><strong>{name}</strong><small>메모 {notes.filter((note) => note.work === index).length}개 · GitHub, Obsidian</small></span><span className="arrow">→</span></button>)}</div></> : page === "notes" ? <div className="overview-note-list">{notes.map((note) => <NoteCard key={note.id} note={note} selected={note.id === selected} onClick={() => selectNote(note.id)} />)}</div> : <ActivityList items={activities} />}</div></section></div>;
+    return <div className="page"><section className="section overview-section"><div className="container"><p className="eyebrow">개인 작업 공간</p><h1>{title}</h1><p className="muted">{page === "home" ? "작업을 다시 시작하는 데 필요한 맥락이 여기 있습니다." : "로컬 메모와 출처, 저장 이유를 함께 확인하세요."}</p>{page === "home" ? <><div className="subhead">최근 작업 묶음</div><div className="overview-work-list">{works.map((name, index) => <button className="overview-work" type="button" key={name} onClick={() => chooseWork(index)}><span className="work-number">0{index + 1}</span><span><strong>{name}</strong><small>메모 {notes.filter((note) => note.work === index && !note.retracted).length}개 · GitHub, Obsidian</small></span><span className="arrow">→</span></button>)}</div></> : page === "notes" ? <div className="overview-note-list">{notes.filter((note) => !note.retracted).map((note) => <NoteCard key={note.id} note={note} selected={note.id === selected} onClick={() => selectNote(note.id)} />)}</div> : <ActivityList items={activities} />}</div></section></div>;
   }
 
   function SearchPage() {
     const normalized = query.trim().toLowerCase();
-    const matchingNotes = notes.filter((note) => (filter === "all" || filter === "notes") && `${note.title} ${note.body}`.toLowerCase().includes(normalized));
+    const matchingNotes = notes.filter((note) => !note.retracted && (filter === "all" || filter === "notes") && `${note.title} ${note.body}`.toLowerCase().includes(normalized));
     const matchingSources = sources.filter((source) => filter !== "notes" && (filter === "all" || filter === source.provider) && `${source.title} ${source.body}`.toLowerCase().includes(normalized));
     return <div className="page"><section className="section overview-section"><div className="container"><h1>맥락 검색</h1><p className="muted">작업 묶음을 넘어 메모와 원본 자료를 찾습니다.</p><div className="searchbox"><label className="sr-only" htmlFor="global-query">검색어</label><div className="search-input-wrap"><Icon name="search" /><input id="global-query" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="배포, 테스트, 읽기 전용…" /></div><label className="sr-only" htmlFor="search-filter">자료 유형</label><select id="search-filter" value={filter} onChange={(event) => setFilter(event.target.value)}><option value="all">모든 자료</option><option value="notes">메모</option><option value="GitHub">GitHub</option><option value="Obsidian">Obsidian</option></select></div><div className="subhead">검색 결과 {matchingNotes.length + matchingSources.length}개</div>{matchingNotes.map((note) => <NoteCard key={`note-${note.id}`} note={note} selected={note.id === selected} onClick={() => selectNote(note.id)} />)}<SourceList sources={matchingSources} onOpen={(source) => setDetail({ type: "source", source })} />{matchingNotes.length + matchingSources.length === 0 && <div className="empty">일치하는 자료가 없습니다. 다른 검색어를 입력해 주세요.</div>}</div></section></div>;
   }
@@ -417,7 +682,7 @@ function App() {
     if (setting === "모양") return <div className="settings-list"><SettingRow title="글자 크기" description="본문의 크기를 바로 확인합니다."><select value={settings.textSize} aria-label="글자 크기" onChange={(event) => setSetting("textSize", event.target.value as AppSettings["textSize"])}><option value="15">기본 · 15px</option><option value="16">크게 · 16px</option><option value="18">아주 크게 · 18px</option></select></SettingRow><SettingRow title="모션 감소" description="이동 효과 없이 즉시 전환합니다."><input type="checkbox" aria-label="모션 감소" checked={settings.reduceMotion} onChange={(event) => setSetting("reduceMotion", event.target.checked)} /></SettingRow><div className="card preview-card"><h3>메모 미리보기</h3><p>테스트 환경이 복구될 때까지 배포를 보류합니다.</p></div></div>;
     if (setting === "플러그인") return <div className="settings-list"><p>초기 플러그인은 GitHub와 Obsidian입니다.</p><button className="btn btn-secondary" type="button" onClick={() => navigate("connections")}>연결과 수집 범위 관리</button><div className="notice">제3자 마켓플레이스는 초기 범위에 포함하지 않습니다.</div></div>;
     if (setting === "에이전트 연결") return <div className="settings-list"><div className="notice">연결 전 · 외부 에이전트가 도구를 호출한 경우에만 메모를 기록합니다.</div><SettingRow title="CLI 설치 상태" description="이 앱에서는 로컬 설치 여부를 확인할 수 없습니다."><span className="tag">확인하지 못함</span></SettingRow><h3>로컬 MCP 설정</h3><pre>{JSON.stringify({ mcpServers: { aidebook: { command: "aidebook", args: ["mcp", "serve", "--stdio"] } } }, null, 2)}</pre><button className="btn btn-secondary" type="button" onClick={() => { void navigator.clipboard?.writeText(JSON.stringify({ mcpServers: { aidebook: { command: "aidebook", args: ["mcp", "serve", "--stdio"] } } }, null, 2)); setToast("MCP 설정을 복사했습니다."); }}>설정 복사</button><p className="small muted">제안된 CLI 형식입니다. 실제 바이너리 설치 후 사용할 수 있습니다.</p></div>;
-    if (setting === "메모와 데이터") return <div className="settings-list"><SettingRow title="자동 메모 기준" description="명시한 결정·선호·제약을 기록하고, 추론은 후보로 구분합니다."><span className="tag">초기 기준</span></SettingRow><SettingRow title="비기록 범위" description="인증 비밀은 기록 대상에서 제외합니다."><input className="inline-input" aria-label="비기록 범위" value={settings.exclude} onChange={(event) => setSetting("exclude", event.target.value)} placeholder="예: 개인 일기" /></SettingRow><SettingRow title="메모 내보내기" description="이 기기에 저장된 메모를 JSON으로 내려받습니다."><button className="btn btn-secondary" type="button" onClick={exportNotes}>내보내기</button></SettingRow></div>;
+    if (setting === "메모와 데이터") return <div className="settings-list"><SettingRow title="자동 메모 기준" description="명시한 결정·선호·제약을 기록하고, 추론은 후보로 구분합니다."><span className="tag">초기 기준</span></SettingRow><SettingRow title="비기록 범위" description="인증 비밀은 기록 대상에서 제외합니다."><input className="inline-input" aria-label="비기록 범위" value={settings.exclude} onChange={(event) => setSetting("exclude", event.target.value)} placeholder="예: 개인 일기" /></SettingRow><SettingRow title="메모 내보내기" description="이 기기에 저장된 메모를 JSON으로 내려받습니다."><button className="btn btn-secondary" type="button" onClick={exportNotes}>내보내기</button></SettingRow><SettingRow title="로컬 메모를 코어로 가져오기" description="명시적으로 실행할 때만 localStorage 메모를 네이티브 SQLite 코어에 복사합니다. 원본 localStorage는 삭제하지 않습니다."><button className="btn btn-secondary" type="button" onClick={() => { void importLocalNotes(); }}>가져오기</button></SettingRow><div className="notice">저장 성공은 코어의 commit 뒤에만 표시됩니다. 브라우저에서는 데모 저장과 네이티브 저장을 구분합니다.</div></div>;
     if (setting === "동기화") return <div className="settings-list"><SettingRow title="조회 주기" description="실제 연결 후 앱이 실행 중일 때 적용됩니다."><select value={settings.syncPeriod} aria-label="조회 주기" onChange={(event) => setSetting("syncPeriod", event.target.value as AppSettings["syncPeriod"])}><option>5분</option><option>15분</option><option>수동</option></select></SettingRow><SettingRow title="웹훅 릴레이" description="사용자가 별도로 켜고 권한을 부여해야 합니다."><span className="tag">연결 안 함</span></SettingRow><button className="btn btn-secondary" type="button" onClick={() => navigate("connections")}>연결별 마지막 성공 확인</button></div>;
     return <div className="settings-list"><p>디자인 및 로컬 기능 · 2026.09.18</p><div className="notice">초기 업데이트는 Homebrew 배포 경로를 사용할 계획입니다. 설치·업데이트 기능은 이 화면에서 실행하지 않습니다.</div><p className="small muted">진단 예시에는 토큰, 외부 문서 본문, 메모 본문을 포함하지 않습니다.</p><button className="btn btn-secondary" type="button" onClick={exportDiagnostics}>진단 예시 내보내기</button></div>;
   }
@@ -429,7 +694,7 @@ function App() {
   function EvidencePanel() {
     if (!selectedNote) return <aside className="evidence empty-evidence"><h2>연결된 근거</h2><p>메모를 선택하면 근거를 확인할 수 있습니다.</p></aside>;
     const linkedSources = sources.filter((source) => selectedNote.sources.includes(source.id));
-    return <aside className="evidence" aria-label="선택한 메모의 근거"><div className="row-between"><h2>메모의 근거</h2><span className="small muted">{linkedSources.length}개 연결</span><button className="tool panel-close" type="button" aria-label="근거 패널 닫기" onClick={() => setInspectorHidden(true)}><Icon name="close" /></button></div><div className="evidence-title">{selectedNote.title}</div><div className="label">왜 기억했나요?</div><blockquote>{selectedNote.reason}</blockquote><div className="label">연결된 원본</div><div className="source-stack">{linkedSources.map((source) => <SourceEvidence key={source.id} source={source} />)}</div><dl className="metadata"><dt>작성 주체</dt><dd>{selectedNote.author}</dd><dt>기록 유형</dt><dd>{selectedNote.kind}</dd><dt>저장 위치</dt><dd>이 기기 · {works[selectedNote.work]}</dd><dt>버전</dt><dd className="mono">{selectedNote.version ?? 1}</dd></dl><div className="actions"><button className="btn btn-secondary" type="button" onClick={() => openEditor(selectedNote.id)}>메모 수정</button><button className="btn btn-ghost" type="button" onClick={() => setDetail({ type: "history", note: selectedNote })}>변경 이력</button></div><p className="footnote">원본의 상태가 바뀌어도 사용자 결정은 유지됩니다. 추론은 후보로 구분합니다.</p></aside>;
+    return <aside className="evidence" aria-label="선택한 메모의 근거"><div className="row-between"><h2>메모의 근거</h2><span className="small muted">{linkedSources.length}개 연결</span><button className="tool panel-close" type="button" aria-label="근거 패널 닫기" onClick={() => setInspectorHidden(true)}><Icon name="close" /></button></div><div className="evidence-title">{selectedNote.title}</div>{selectedNote.retracted && <div className="notice">철회된 메모 · 본문과 이력은 보존됩니다.</div>}<div className="label">왜 기억했나요?</div><blockquote>{selectedNote.reason}</blockquote><div className="label">연결된 원본</div><div className="source-stack">{linkedSources.map((source) => <SourceEvidence key={source.id} source={source} />)}</div><dl className="metadata"><dt>작성 주체</dt><dd>{selectedNote.author}</dd><dt>기록 유형</dt><dd>{selectedNote.kind}</dd><dt>저장 위치</dt><dd>이 기기 · {works[selectedNote.work]}</dd><dt>버전</dt><dd className="mono">{selectedNote.version ?? 1}</dd></dl><div className="actions">{!selectedNote.retracted && <><button className="btn btn-secondary" type="button" onClick={() => openEditor(selectedNote.id)}>메모 수정</button><button className="btn btn-ghost" type="button" onClick={() => { void retractNote(selectedNote); }}>철회</button></>}<button className="btn btn-ghost" type="button" onClick={() => setDetail({ type: "history", note: selectedNote })}>변경 이력</button></div><p className="footnote">원본의 상태가 바뀌어도 사용자 결정은 유지됩니다. 추론은 후보로 구분합니다.</p></aside>;
   }
 
   function SourceEvidence({ source }: { source: Source }) {
@@ -454,11 +719,14 @@ function App() {
   function exportDiagnostics() { downloadJson("aidebook-diagnostics.json", { type: "local-ui", version: status?.version ?? "0.1.0", externalConnections: false, exportedAt: new Date().toISOString() }); setToast("진단 예시를 내보냈습니다."); }
   function downloadJson(filename: string, value: unknown) { const blob = new Blob([JSON.stringify(value, null, 2)], { type: "application/json" }); const url = URL.createObjectURL(blob); const anchor = document.createElement("a"); anchor.href = url; anchor.download = filename; anchor.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000); }
 
-  return <div className={`shell ${sidebarHidden ? "sidebar-hidden" : ""} ${sidebarMobileOpen ? "sidebar-mobile-open" : ""} ${inspectorHidden ? "inspector-hidden" : ""}`}><aside className="sidebar" aria-label="주요 메뉴"><div className="brand"><Icon name="brand" /><span>Aidebook</span></div><nav className="main-nav" aria-label="주요 메뉴"><NavButton active={page === "home"} icon="work" onClick={() => navigate("home")}>최근 맥락</NavButton><NavButton active={page === "notes"} icon="notes" onClick={() => navigate("notes")}>모든 메모<span className="count">{notes.length}</span></NavButton><NavButton active={page === "activity"} icon="activity" onClick={() => navigate("activity")}>활동 기록</NavButton></nav><div className="works"><p className="navlabel">작업 묶음</p><div>{works.map((name, index) => <button className={`navbtn work ${page === "work" && work === index ? "active" : ""}`} type="button" key={name} aria-current={page === "work" && work === index ? "page" : undefined} onClick={() => chooseWork(index)}><span className="dot" /><span>{name}</span><span className="count">{notes.filter((note) => note.work === index).length}</span></button>)}</div></div><div className="sidebar-bottom"><button className={`navbtn ${page === "connections" ? "active" : ""}`} type="button" onClick={() => navigate("connections")}><Icon name="link" />연결 상태<span className="count">1</span></button><button className={`navbtn ${page === "settings" ? "active" : ""}`} type="button" onClick={() => navigate("settings")}><Icon name="settings" />설정<span className="count">⌘ ,</span></button><div className="profile"><span className="avatar">나</span><div>개인 작업 공간<div className="small muted">이 기기에 보관</div></div></div></div></aside><main className="main" id="content"><header className="topbar"><button className="tool" type="button" aria-label="사이드바 접기 또는 펼치기" aria-expanded={!sidebarHidden} onClick={() => { if (window.innerWidth <= 760) setSidebarMobileOpen((open) => !open); else setSidebarHidden((hidden) => !hidden); }}><Icon name="panel-left" /></button><div className="crumb">{pageTitle()}</div><button className="search-launch" type="button" onClick={() => navigate("search")}><Icon name="search" />자료와 메모 검색 <kbd>⌘ K</kbd></button><span className="tag">예시 데이터</span><button className="tool inspector-toggle" type="button" aria-label="메모 근거 패널" aria-expanded={!inspectorHidden} onClick={() => setInspectorHidden((hidden) => !hidden)}><Icon name="panel-right" /></button></header><div id="view" tabIndex={-1}>{renderPage()}</div></main>{editor && <EditorModal />}{detail && <DetailModal />}{toast && <div className="toast" role="status">{toast}{undoStack.length > 0 && <button type="button" onClick={undoChange}>되돌리기</button>}</div>}</div>;
+  return <div className={`shell ${sidebarHidden ? "sidebar-hidden" : ""} ${sidebarMobileOpen ? "sidebar-mobile-open" : ""} ${inspectorHidden ? "inspector-hidden" : ""}`}><aside className="sidebar" aria-label="주요 메뉴"><div className="brand"><Icon name="brand" /><span>Aidebook</span></div><nav className="main-nav" aria-label="주요 메뉴"><NavButton active={page === "home"} icon="work" onClick={() => navigate("home")}>최근 맥락</NavButton><NavButton active={page === "notes"} icon="notes" onClick={() => navigate("notes")}>모든 메모<span className="count">{notes.filter((note) => !note.retracted).length}</span></NavButton><NavButton active={page === "activity"} icon="activity" onClick={() => navigate("activity")}>활동 기록</NavButton></nav><div className="works"><p className="navlabel">작업 묶음</p><div>{works.map((name, index) => <button className={`navbtn work ${page === "work" && work === index ? "active" : ""}`} type="button" key={name} aria-current={page === "work" && work === index ? "page" : undefined} onClick={() => chooseWork(index)}><span className="dot" /><span>{name}</span><span className="count">{notes.filter((note) => note.work === index && !note.retracted).length}</span></button>)}</div></div><div className="sidebar-bottom"><button className={`navbtn ${page === "connections" ? "active" : ""}`} type="button" onClick={() => navigate("connections")}><Icon name="link" />연결 상태<span className="count">1</span></button><button className={`navbtn ${page === "settings" ? "active" : ""}`} type="button" onClick={() => navigate("settings")}><Icon name="settings" />설정<span className="count">⌘ ,</span></button><div className="profile"><span className="avatar">나</span><div>개인 작업 공간<div className="small muted">이 기기에 보관</div></div></div></div></aside><main className="main" id="content"><header className="topbar"><button className="tool" type="button" aria-label="사이드바 접기 또는 펼치기" aria-expanded={!sidebarHidden} onClick={() => { if (window.innerWidth <= 760) setSidebarMobileOpen((open) => !open); else setSidebarHidden((hidden) => !hidden); }}><Icon name="panel-left" /></button><div className="crumb">{pageTitle()}</div><button className="search-launch" type="button" onClick={() => navigate("search")}><Icon name="search" />자료와 메모 검색 <kbd>⌘ K</kbd></button><span className="tag">예시 데이터</span><button className="tool inspector-toggle" type="button" aria-label="메모 근거 패널" aria-expanded={!inspectorHidden} onClick={() => setInspectorHidden((hidden) => !hidden)}><Icon name="panel-right" /></button></header><div id="view" tabIndex={-1}>{renderPage()}</div></main>{editor && <EditorModal />}{detail && <DetailModal />}{toast && <div className="toast" role="status">{toast}{undoStack.length > 0 && <button type="button" onClick={undoChange}>되돌리기</button>}</div>}</div>;
 
   function NavButton({ active, icon, onClick, children }: { active: boolean; icon: "work" | "notes" | "activity"; onClick: () => void; children: ReactNode }) { return <button className={`navbtn ${active ? "active" : ""}`} type="button" aria-current={active ? "page" : undefined} onClick={onClick}><Icon name={icon} />{children}</button>; }
 
-  function EditorModal() { if (!editor) return null; return <Modal title={editor.id === null ? "새 메모" : "메모 수정"} onClose={() => setEditor(null)}><form onSubmit={saveEditor}><label className="field">제목<input ref={editorTitleRef} className="input" maxLength={100} required value={editor.title} onChange={(event) => setEditor({ ...editor, title: event.target.value })} /></label><label className="field">내용<textarea className="textarea" required value={editor.body} onChange={(event) => setEditor({ ...editor, body: event.target.value })} /></label><label className="field">메모 유형<select className="input" value={editor.kind} onChange={(event) => setEditor({ ...editor, kind: event.target.value as NoteKind })}>{noteKinds.map((kind) => <option key={kind}>{kind}</option>)}</select></label><p className="small muted">현재 작업 묶음에 저장합니다. 직접 작성한 메모는 동기화로 덮어쓰지 않습니다.</p><div className="actions"><button className="btn btn-secondary" type="button" onClick={() => setEditor(null)}>취소</button><button className="btn btn-primary" type="submit">메모 저장</button></div></form></Modal>; }
+  function EditorModal() {
+    if (!editor) return null;
+    return <Modal title={editor.id === null ? "새 메모" : "메모 수정"} onClose={() => { if (!savingEditor) setEditor(null); }}><form onSubmit={saveEditor}><label className="field">제목<input ref={editorTitleRef} className="input" maxLength={100} required value={editor.title} onChange={(event) => setEditor({ ...editor, title: event.target.value })} /></label><label className="field">내용<textarea className="textarea" required value={editor.body} onChange={(event) => setEditor({ ...editor, body: event.target.value })} /></label><label className="field">저장 이유<textarea className="textarea" required value={editor.reason} onChange={(event) => setEditor({ ...editor, reason: event.target.value })} /></label><label className="field">메모 유형<select className="input" value={editor.kind} onChange={(event) => setEditor({ ...editor, kind: event.target.value as NoteKind })}>{noteKinds.map((kind) => <option key={kind}>{kind}</option>)}</select></label><fieldset className="evidence-picker"><legend>연결할 근거</legend>{sources.map((source) => <label key={source.id} className="check-row"><input type="checkbox" checked={editor.sources.includes(source.id)} onChange={(event) => setEditor({ ...editor, sources: event.target.checked ? [...editor.sources, source.id] : editor.sources.filter((id) => id !== source.id) })} />{source.provider} · {source.title}</label>)}</fieldset><p className="small muted">저장 시 선택한 근거·저장 이유·작성 주체·주장 유형을 코어 계약으로 전달합니다. 직접 작성한 메모는 동기화로 덮어쓰지 않습니다.</p><div className="actions"><button className="btn btn-secondary" type="button" disabled={savingEditor} onClick={() => setEditor(null)}>취소</button><button className="btn btn-primary" type="submit" disabled={savingEditor}>{savingEditor ? "저장 중…" : "메모 저장"}</button></div></form></Modal>;
+  }
 
   function DetailModal() {
     if (!detail) return null;

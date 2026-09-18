@@ -3,8 +3,8 @@ pub mod core;
 use core::{
     ContextRequest, Core, CoreError, CredentialStore, GitHubAdapter, GitHubConfig, HttpGitHubApi,
     KeychainCredentialStore, MemoryRestoreInput, MemoryRetractInput, MemoryUpsertInput,
-    ObsidianAdapter, ReadOnlyConnector, SearchRequest, SourcesRefreshResult, VaultConfig,
-    VaultScanResult,
+    ObsidianAdapter, ReadOnlyConnector, RelationInput, SearchRequest, Snapshot, SourceRef,
+    SourcesRefreshResult, UiMemoryUpsertInput, VaultConfig, VaultScanResult,
 };
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -212,6 +212,16 @@ fn context_get(
 }
 
 #[tauri::command]
+fn relation_add(input: RelationInput, state: State<'_, AppState>) -> Result<(), CoreError> {
+    state.core.add_relation(input)
+}
+
+#[tauri::command]
+fn relation_remove(input: RelationInput, state: State<'_, AppState>) -> Result<bool, CoreError> {
+    state.core.remove_relation(input)
+}
+
+#[tauri::command]
 fn memory_upsert(
     request: MemoryUpsertInput,
     state: State<'_, AppState>,
@@ -233,6 +243,55 @@ fn memory_restore(
     state: State<'_, AppState>,
 ) -> Result<core::MemoryMutation, CoreError> {
     state.core.restore_memory(request)
+}
+
+fn ensure_ui_evidence(core: &Core, evidence: &[SourceRef]) -> Result<(), CoreError> {
+    for source in evidence {
+        match core.snapshot(source) {
+            Ok(_) => {}
+            Err(CoreError::NotFound { .. }) => {
+                core.ingest_snapshot(Snapshot::new(
+                    source.clone(),
+                    source.external_id.clone(),
+                    "Evidence captured by an explicit local UI action.",
+                    None,
+                    core::now_rfc3339(),
+                ))?;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn ui_memory_upsert(
+    request: UiMemoryUpsertInput,
+    state: State<'_, AppState>,
+) -> Result<core::UiMemoryMutation, CoreError> {
+    ensure_ui_evidence(&state.core, &request.memory.evidence)?;
+    state.core.ui_memory_upsert(request)
+}
+
+#[tauri::command]
+fn ui_memory_retract(
+    request: MemoryRetractInput,
+    state: State<'_, AppState>,
+) -> Result<core::UiMemoryMutation, CoreError> {
+    state.core.ui_memory_retract(request)
+}
+
+#[tauri::command]
+fn ui_memory_restore(
+    request: MemoryRestoreInput,
+    state: State<'_, AppState>,
+) -> Result<core::UiMemoryMutation, CoreError> {
+    state.core.ui_memory_restore(request)
+}
+
+#[tauri::command]
+fn ui_memory_list(state: State<'_, AppState>) -> Result<Vec<core::UiMemory>, CoreError> {
+    state.core.ui_memories()
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -264,9 +323,15 @@ pub fn run() {
             github_refresh,
             context_search,
             context_get,
+            relation_add,
+            relation_remove,
             memory_upsert,
             memory_retract,
-            memory_restore
+            memory_restore,
+            ui_memory_upsert,
+            ui_memory_retract,
+            ui_memory_restore,
+            ui_memory_list
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

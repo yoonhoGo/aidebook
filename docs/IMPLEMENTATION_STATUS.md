@@ -49,12 +49,29 @@ M1의 watcher는 재현 가능한 polling 구현이다. native FSEvents와 실�
 라이브 transport는 수동 선택 경로에서만 동작하도록 구현했으며 fixture 증거가
 실계정 smoke를 대신하지 않는다.
 
+## M3 — 완료 (관계·Core 메모 UI 경계)
+
+- 관계는 SourceRef의 명시 URL/외부 ID와 이유로만 추가하며 `relation_remove`로
+  해제; 제목 일치만으로 병합하지 않음
+- 1-hop 명시 관계를 기반으로 `context_get` WorkContext를 파생하고, 접근 불가
+  근거는 `unavailable_sources`로 분리하면서 사용자 메모 본문은 보존
+- `ui_memories` v4 마이그레이션이 Core Memory의 title/work/kind를 연결하고
+  멱등성·expected_version·철회·복원 이력을 공유
+- Tauri `ui_memory_upsert`/`retract`/`restore`/`list` command와 UI 근거 선택,
+  저장 이유, 작성 주체, inferred claim type 연결
+- UI는 Core commit 성공 뒤에만 네이티브 성공을 표시하고, 브라우저 fallback은
+  “브라우저 데모 저장”으로 명확히 표시
+- localStorage 메모 → Core 가져오기는 설정에서 사용자가 누르는 명시적 작업이며
+  원본 localStorage를 삭제하지 않음
+- 제목 중복 비병합, 관계 해제, 10개 UI 메모 저장, 멱등성/버전 충돌, 접근 불가
+  evidence와 사용자 메모 보존을 integration test로 검증
+
 ## 검증 기록
 
 | 명령 | 결과 |
 | --- | --- |
 | `npm run build` | 통과: `tsc` + Vite production build |
-| `cargo test --manifest-path src-tauri/Cargo.toml` | 통과: Rust unit 6개, M0 integration 6개, M1 integration 1개, M2 integration 2개 |
+| `cargo test --manifest-path src-tauri/Cargo.toml` | 통과: Rust unit 6개, M0 integration 6개, M1 integration 1개, M2 integration 2개, M3 integration 3개 |
 | `cargo check --manifest-path src-tauri/Cargo.toml` | 통과 |
 | `git diff --check` | 통과 |
 | `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` | 통과 |
@@ -75,12 +92,13 @@ React UI의 `localStorage` 메모와 아이콘은 보존했으며 자동 migrati
 
 ## 다음 작업
 
-M3에서 명시적 관계와 메모 UI 저장 경계를 연결하고, M4에서 단일 Core
+M4에서 단일 Core
 소유 프로세스와 인증된 local IPC/CLI/MCP를 추가한다. M5에서 백업·복구,
 접근성·arm64 패키징 템플릿·재현 가능한 10,000건 p95 측정을 마무리한다.
 
 ## jj 기록
 
 로드맵 변경 `sqonnulz` 위에 M0 구현 `sxonqxql`/`yptolqwy`, M1 구현
-`mqkpvwql`, M2 구현 `qswsrmtk`를 순서대로 기록한다. 각 단계는 다음 단계의
-빈 child change에서 계속하며 main 이력·원격·push는 건드리지 않았다.
+`mqkpvwql`, M2 구현 `qswsrmtk`, M3 구현 `lqxykmkx`를 순서대로 기록한다.
+각 단계는 다음 단계의 빈 child change에서 계속하며 main 이력·원격·push는
+건드리지 않았다.

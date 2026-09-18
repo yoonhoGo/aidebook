@@ -161,6 +161,10 @@ impl Core {
         self.database.add_relation(input)
     }
 
+    pub fn remove_relation(&self, input: RelationInput) -> CoreResult<bool> {
+        self.database.remove_relation(input)
+    }
+
     pub fn search(&self, request: SearchRequest) -> CoreResult<SearchResponse> {
         self.database.search(request)
     }
@@ -240,6 +244,22 @@ impl Core {
 
     pub fn restore_memory(&self, input: MemoryRestoreInput) -> CoreResult<MemoryMutation> {
         self.database.restore_memory(input)
+    }
+
+    pub fn ui_memory_upsert(&self, input: UiMemoryUpsertInput) -> CoreResult<UiMemoryMutation> {
+        self.database.ui_memory_upsert(input)
+    }
+
+    pub fn ui_memory_retract(&self, input: MemoryRetractInput) -> CoreResult<UiMemoryMutation> {
+        self.database.ui_memory_retract(input)
+    }
+
+    pub fn ui_memory_restore(&self, input: MemoryRestoreInput) -> CoreResult<UiMemoryMutation> {
+        self.database.ui_memory_restore(input)
+    }
+
+    pub fn ui_memories(&self) -> CoreResult<Vec<UiMemory>> {
+        self.database.ui_memories()
     }
 
     pub fn memory(&self, id: &str) -> CoreResult<Memory> {

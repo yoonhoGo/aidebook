@@ -3,6 +3,7 @@ use aidebook_lib::core::{
     GitHubComment, GitHubConfig, GitHubIssue, GitHubPage, MemoryCredentialStore, ReadOnlyConnector,
     SearchRequest,
 };
+use std::collections::HashMap;
 
 fn issue(number: u64) -> GitHubIssue {
     GitHubIssue {
@@ -73,9 +74,10 @@ fn selected_repository_refreshes_pages_and_preserves_last_success_on_failure() {
             limit: Some(20),
         })
         .expect("search")
-        .results[0]
-        .fetched_at
-        .clone();
+        .results
+        .into_iter()
+        .map(|result| (result.source.external_id, result.fetched_at))
+        .collect::<HashMap<_, _>>();
 
     let failing = adapter(
         FixtureGitHubApi::new([GitHubPage {
@@ -112,10 +114,11 @@ fn selected_repository_refreshes_pages_and_preserves_last_success_on_failure() {
         })
         .expect("search after failed refresh");
     assert_eq!(after.results.len(), 2);
-    assert!(after
-        .results
-        .iter()
-        .all(|result| result.fetched_at == fetched_at));
+    assert!(after.results.iter().all(|result| {
+        fetched_at
+            .get(&result.source.external_id)
+            .is_some_and(|before| before == &result.fetched_at)
+    }));
 }
 
 #[test]

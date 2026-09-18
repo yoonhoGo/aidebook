@@ -47,13 +47,13 @@ with Git. Use `jj status`, `jj diff`, and `jj log` for change management.
 ## Scope notes
 
 The product plan is kept in the Obsidian vault as `비서의 노트 기획서.md`.
-M2 now provides a local SQLite/FTS5 core, deterministic connector fixtures,
-an explicitly selected read-only Obsidian vault scan, and a selected-scope
-GitHub adapter with Keychain/fixture credential boundaries. The React UI
-intentionally keeps its existing `localStorage` persistence until its explicit
-migration and save boundary is implemented. External writes, remote webhook
-infrastructure, real account access, CLI/MCP processes, and native app
-verification remain staged boundaries. See
+M3 now provides a local SQLite/FTS5 core, deterministic connector fixtures,
+explicitly selected read-only Obsidian/GitHub source adapters, and a Core-backed
+memory UI path with explicit localStorage import. The React UI keeps existing
+localStorage data unless the user chooses import; browser fallback saves are
+labelled as demos. External writes, remote webhook infrastructure, real account
+smoke, CLI/MCP processes, and native app verification remain staged boundaries.
+See
 [`docs/CORE_CONTRACT.md`](docs/CORE_CONTRACT.md) and
 [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md) for the
 contract and verification boundary.

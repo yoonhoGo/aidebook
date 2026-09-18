@@ -389,6 +389,31 @@ pub struct MemoryMutation {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UiMemory {
+    pub id: String,
+    pub title: String,
+    pub work: i64,
+    pub kind: String,
+    pub memory: Memory,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UiMemoryUpsertInput {
+    pub title: String,
+    pub work: i64,
+    pub kind: String,
+    pub memory: MemoryUpsertInput,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UiMemoryMutation {
+    pub memory: UiMemory,
+    pub created: bool,
+    pub idempotent_replay: bool,
+    pub action: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RelationInput {
     pub from: SourceRef,
     pub to: SourceRef,
