@@ -26,7 +26,7 @@ MVP 설계 우선. 이 문서는 전체 MVP 완료 보고서가 아니다.
 | 명령 | 결과 |
 | --- | --- |
 | `npm run build` | 통과: `tsc` + Vite production build |
-| `cargo test --manifest-path src-tauri/Cargo.toml` | 통과: Rust unit 1개, M0 integration 5개 |
+| `cargo test --manifest-path src-tauri/Cargo.toml` | 통과: Rust unit 1개, M0 integration 6개 |
 | `cargo check --manifest-path src-tauri/Cargo.toml` | 통과 |
 | `git diff --check` | 통과 |
 | `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` | 통과 |
@@ -53,5 +53,9 @@ provider 연결을 자동으로 시작하지 않는다.
 
 ## jj 기록
 
-로드맵 변경 `sqonnulz` 위의 구현 change에서 작업했으며, 최종 change ID는
-jj 작업 단위를 마친 뒤 아래에 기록한다.
+로드맵 변경 `sqonnulz` 위에 구현 change `sxonqxql`을 만들었다
+(`07836b81 feat: implement M0 local core contracts and SQLite persistence`).
+이 상태 문서의 검증 기록은 그 구현 change에 포함한다. 다음 작업을 위한
+후속 M0 보강·검증 change `yptolqwy`도 만들었다
+(`feat: complete M0 connector facade and verification contract`).
+main 이력·원격·push는 건드리지 않았다.

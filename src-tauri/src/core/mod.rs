@@ -11,7 +11,9 @@ pub mod fixtures;
 pub mod types;
 
 use db::Database;
-pub use fixtures::{FixtureAdapter, FixtureFile, ReadOnlyConnector};
+pub use fixtures::{
+    ChangeBatch, ConnectorConnection, FixtureAdapter, FixtureFile, ReadOnlyConnector,
+};
 use std::path::Path;
 use std::sync::Arc;
 pub use types::*;

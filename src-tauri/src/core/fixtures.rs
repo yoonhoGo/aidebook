@@ -14,6 +14,50 @@ pub trait ReadOnlyConnector {
     fn connection_id(&self) -> &str;
     fn list(&self) -> CoreResult<Vec<Snapshot>>;
     fn fetch(&self, source: &SourceRef) -> CoreResult<Snapshot>;
+
+    /// Establishes a read-only scope. Real adapters will validate account and
+    /// repository/vault scope here; fixtures only expose their declared scope.
+    fn connect(&self, scope: &str) -> CoreResult<ConnectorConnection> {
+        if scope.trim().is_empty() {
+            return Err(CoreError::InvalidInput {
+                field: "scope".to_string(),
+                message: "must not be empty".to_string(),
+            });
+        }
+        Ok(ConnectorConnection {
+            connection_id: self.connection_id().to_string(),
+            provider: self.manifest().id,
+            scope: scope.to_string(),
+        })
+    }
+
+    /// Returns a read-only change batch. A live connector may use a cursor;
+    /// the deterministic fixture returns all of its snapshots.
+    fn sync(&self, _cursor: Option<&str>) -> CoreResult<ChangeBatch> {
+        Ok(ChangeBatch {
+            snapshots: self.list()?,
+            tombstones: Vec::new(),
+            next_cursor: None,
+        })
+    }
+
+    fn disconnect(&self) -> CoreResult<()> {
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectorConnection {
+    pub connection_id: String,
+    pub provider: String,
+    pub scope: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChangeBatch {
+    pub snapshots: Vec<Snapshot>,
+    pub tombstones: Vec<SourceRef>,
+    pub next_cursor: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -183,6 +183,10 @@ impl Snapshot {
         if self.fetched_at.trim().is_empty() {
             self.fetched_at = now_rfc3339();
         }
+        parse_timestamp(&self.fetched_at)?;
+        if let Some(source_updated_at) = self.source_updated_at.as_deref() {
+            parse_timestamp(source_updated_at)?;
+        }
         let computed = content_hash(&self.title, &self.body);
         if self.content_hash.trim().is_empty() {
             self.content_hash = computed;

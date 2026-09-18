@@ -119,9 +119,10 @@ transaction에서 적용한다.
 
 ## 읽기 전용 어댑터와 fixture
 
-`ReadOnlyConnector`는 `manifest`, `connection_id`, `list`, `fetch`만
-제공한다. `write`, `execute`, token 반환 계약은 없다. 현재
-`FixtureAdapter`가 실제 어댑터의 경계를 재현한다.
+`ReadOnlyConnector`는 `manifest`, `connection_id`, `connect`, `sync`, `fetch`,
+`disconnect`만 제공한다. `write`, `execute`, token 반환 계약은 없다.
+현재 `FixtureAdapter`가 실제 어댑터의 경계를 재현한다. `sources_refresh`는
+그 중 읽기 전용 snapshot batch만 코어 저장소에 반영한다.
 
 - `src-tauri/fixtures/obsidian.json`
 - `src-tauri/fixtures/github.json`

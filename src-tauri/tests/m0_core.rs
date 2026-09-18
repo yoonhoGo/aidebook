@@ -346,6 +346,13 @@ fn fixture_contract_is_read_only_and_has_explicit_provider_scope() {
         .capabilities
         .contains(&"read".to_string()));
     assert_eq!(adapter.connection_id(), "fixture-github-repository");
+    let connection = adapter
+        .connect("yoonhoGo/aidebook")
+        .expect("read-only connect");
+    assert_eq!(connection.provider, "github");
+    let batch = adapter.sync(None).expect("read-only sync");
+    assert_eq!(batch.snapshots.len(), 4);
+    adapter.disconnect().expect("read-only disconnect");
     let core = Core::in_memory().expect("in-memory core");
     let refresh = core.sources_refresh(&adapter).expect("sources.refresh");
     assert_eq!(refresh.attempted, 4);
