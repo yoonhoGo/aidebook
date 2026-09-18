@@ -15,7 +15,7 @@
 - 임시/in-memory DB 회귀 테스트와 마이그레이션 rollback 테스트
 - [CORE_CONTRACT.md](./CORE_CONTRACT.md)에 저장·IPC 경계 고정
 
-## M1 — 완료 (선택된 Obsidian vault)
+## M1 — 구현 완료 · native 검증 대기 (선택된 Obsidian vault)
 
 - 사용자가 선택한 한 경로만 canonicalize하여 읽는 `ObsidianAdapter` 추가
 - Markdown title/body와 허용 목록 frontmatter만 색인하고 wikilink·URL을 명시적
@@ -25,23 +25,29 @@
   상태는 보존
 - content hash 기반 add/modify/remove 및 available/unavailable 변화 계산과
   재현 가능한 polling watcher 추가
-- Tauri `vault_select`/`vault_scan` command가 Core의 동일 refresh 경로를 사용
+- Tauri `vault_select`/`vault_scan` command가 선택 adapter와 polling watcher를
+  보관하고 Core의 동일 refresh 경로에 해시 변경 목록을 연결
+- 네이티브 연결 화면의 사용자가 vault 경로를 직접 입력해 선택·스캔하고,
+  브라우저에서는 실제 경로를 요청하지 않는 경계를 표시
 - 임시 vault에서 무쓰기·범위 제한·메타데이터 필터·링크·iCloud 상태·검색 회귀 검증
 
 M1의 watcher는 재현 가능한 polling 구현이다. native FSEvents와 실제 iCloud
 다운로드 상태는 아직 검증하지 않았다.
 
-## M2 — 완료 (선택된 GitHub repository)
+## M2 — 구현 완료 · live 검증 대기 (선택된 GitHub repository)
 
 - `GitHubConfig`가 account/connection/owner/repository를 하나의 명시적 scope로
   검증하고 경로 주입·범위 이탈을 거부
 - `GitHubAdapter`가 이슈·pull request·댓글·상태·labels를 읽기 전용 snapshot으로
   변환하고 page cursor를 순회
 - `CredentialStore` 경계와 in-memory fixture store 추가; macOS에서는
-  `security` Keychain 명령으로만 credential을 읽고 저장
+  `security` Keychain 명령의 stdin prompt로만 credential을 읽고 저장하며
+  token을 argv·로그·SQLite에 두지 않음
 - 401/403/404/429/5xx·network·malformed 응답을 구조화 오류로 분류
 - `github_select`/`github_credential_set`/`github_refresh` Tauri command를 통해
   사용자의 명시적 선택·저장·수동 refresh만 허용
+- 네이티브 연결 화면에서 owner/repository를 직접 선택하고 빈 token은 기존
+  Keychain 조회로 남기며, GitHub 연결 해제와 credential 삭제를 분리
 - fixture 페이지·권한 거부·누락 credential·페이지 순회 테스트와 실패 시
   마지막 성공 `fetched_at`/snapshot 보존 테스트 통과
 
@@ -49,7 +55,7 @@ M1의 watcher는 재현 가능한 polling 구현이다. native FSEvents와 실�
 라이브 transport는 수동 선택 경로에서만 동작하도록 구현했으며 fixture 증거가
 실계정 smoke를 대신하지 않는다.
 
-## M3 — 완료 (관계·Core 메모 UI 경계)
+## M3 — 구현 완료 · UI/native 검증 대기 (관계·Core 메모 UI 경계)
 
 - 관계는 SourceRef의 명시 URL/외부 ID와 이유로만 추가하며 `relation_remove`로
   해제; 제목 일치만으로 병합하지 않음
@@ -66,7 +72,7 @@ M1의 watcher는 재현 가능한 polling 구현이다. native FSEvents와 실�
 - 제목 중복 비병합, 관계 해제, 10개 UI 메모 저장, 멱등성/버전 충돌, 접근 불가
   evidence와 사용자 메모 보존을 integration test로 검증
 
-## M4 — 완료 (단일 Core owner · authenticated IPC · CLI/MCP)
+## M4 — 구현 완료 · native/protocol-host 검증 대기 (단일 Core owner · authenticated IPC · CLI/MCP)
 
 - Tauri setup이 앱 데이터 디렉터리에서 Core를 한 번 열고, 같은 프로세스의
   Unix socket `CoreServer`를 owner로 시작; `Arc<Database>` 외부 직접 open 경로 없음
@@ -80,11 +86,17 @@ M1의 watcher는 재현 가능한 polling 구현이다. native FSEvents와 실�
   노출하며 tool 결과·오류를 Core IPC로 전달
 - IPC integration test에서 direct Core/CLI client/MCP tool 결과 일치, fixture
   refresh, 잘못된 token 거부, six tool count를 검증
+- Tauri `WindowEvent::Destroyed`가 Core server stop flag를 설정해 socket/token/lock
+  정리를 요청하며, 실제 native 창 종료·재시작 smoke는 별도로 남김
+- arm64 staged `aidebook-core` + `aidebook-cli`를 임시 DB/socket으로 실행해
+  구조화된 stderr 오류와 MCP `tools/list` 6개 응답을 확인
+- standalone owner를 강제 종료한 뒤 stale PID lock/socket을 회수하고 같은
+  endpoint로 재시작하는 local smoke도 통과
 
 실제 패키지 바이너리를 외부 MCP host에 연결하거나 macOS 창 종료·재시작,
 Keychain/실계정 provider와 함께 실행하는 native smoke는 아직 검증하지 않았다.
 
-## M5 — 완료 (보호·접근성·arm64 local package)
+## M5 — 구현 완료 · release/native 검증 대기 (보호·접근성·arm64 local package)
 
 - `Core::backup_to`는 SQLite `VACUUM INTO` 임시 파일과 integrity check 후
   명시된 새 경로로 commit; `restore_from`은 corrupt backup 실패 시 원래 DB를
@@ -99,7 +111,7 @@ Keychain/실계정 provider와 함께 실행하는 native smoke는 아직 검증
   `aarch64-apple-darwin` local staging directory에 생성; Cask는 placeholder
   template만 제공하며 signing/notarization/tap publish를 수행하지 않음
 - deterministic FTS benchmark: seed `20260919`, seed count `10000`, warmup
-  `5`, measured `30`, p95 `26.268ms`, environment `macos/aarch64`, rustc
+  `5`, measured `30`, p95 `24.509ms`, environment `macos/aarch64`, rustc
   `1.94.1`, parallelism `12`; reproducible command는 아래 표에 기록
 
 ## 검증 기록
@@ -107,12 +119,13 @@ Keychain/실계정 provider와 함께 실행하는 native smoke는 아직 검증
 | 명령 | 결과 |
 | --- | --- |
 | `npm run build` | 통과: `tsc` + Vite production build |
-| `cargo test --manifest-path src-tauri/Cargo.toml` | 통과: Rust unit 9개, M0 integration 6개, M1 integration 1개, M2 integration 2개, M3 integration 3개, M4 integration 1개 |
+| `cargo test --manifest-path src-tauri/Cargo.toml` | 통과: Rust unit 11개, M0 integration 6개, M1 integration 1개, M2 integration 2개, M3 integration 3개, M4 integration 1개, M5 storage 3개, M5 benchmark 1개 |
 | `cargo check --manifest-path src-tauri/Cargo.toml` | 통과 |
 | `git diff --check` | 통과 |
 | `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` | 통과 |
-| `cargo test --manifest-path src-tauri/Cargo.toml --test m5_benchmark -- --nocapture` | 통과: seed=20260919, n=10000, warmup=5, runs=30, p95=26.268ms, macOS aarch64 |
+| `cargo test --manifest-path src-tauri/Cargo.toml --test m5_benchmark -- --nocapture` | 통과: seed=20260919, n=10000, warmup=5, runs=30, p95=24.509ms, macOS aarch64 |
 | `AIDEBOOK_PACKAGE_DIR=/tmp/aidebook-arm64-package scripts/package-arm64.sh` | 통과: arm64 local binaries 3개 staged; 서명/공증/릴리스 미실행 |
+| staged `aidebook-core` + `aidebook-cli` local smoke | 통과: `connections.status` structured stderr, MCP `tools/list` 6개; third-party host/native window 미검증 |
 
 ## 검증하지 않은 경계
 
@@ -130,12 +143,14 @@ React UI의 `localStorage` 메모와 아이콘은 보존했으며 자동 migrati
 
 ## 다음 작업
 
-M5까지 로컬 구현은 완료했다. 남은 것은 signing/notarization, public release
-asset/Cask ownership, 실계정·iCloud·native window 및 외부 MCP host smoke다.
+M5까지 로컬 구현은 완료했지만 위 native/live/release 검증이 남아 있어 로드맵의
+최종 end-to-end acceptance 완료로 표시하지 않는다. 남은 것은
+signing/notarization, public release asset/Cask ownership, 실계정·iCloud·native
+window 및 외부 MCP host smoke다.
 
 ## jj 기록
 
 로드맵 변경 `sqonnulz` 위에 M0 구현 `sxonqxql`/`yptolqwy`, M1 구현
 `mqkpvwql`, M2 구현 `qswsrmtk`, M3 구현 `lqxykmkx`, M4 구현 `svykzmml`,
-M5 구현 child를 순서대로 기록한다. 각 단계는 다음 단계의 빈 child change에서
-계속하며 main 이력·원격·push는 건드리지 않았다.
+M5 구현 `ympmpyot`을 순서대로 기록한다. main 이력·원격·push는 건드리지
+않았다.

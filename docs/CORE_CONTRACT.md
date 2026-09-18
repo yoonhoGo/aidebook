@@ -1,9 +1,10 @@
 # Aidebook local core contract
 
 이 문서는 `비서의 노트 MVP 설계.md`의 구체적인 MVP 규칙을 Rust 코어에
-고정한다. M0의 코어는 UI·CLI·MCP가 함께 사용할 transport-neutral API와
-SQLite/FTS5 저장소를 제공한다. 아직 실제 볼트 스캔, GitHub 계정 연결,
-Keychain, CLI 프로세스, MCP stdio 서버를 시작하지 않는다.
+고정한다. 코어는 UI·CLI·MCP가 함께 사용할 transport-neutral API와
+SQLite/FTS5 저장소를 제공한다. M1/M2의 실제 adapter 경로와 M4의 CLI/MCP
+transport는 사용자가 명시적으로 선택한 범위에서만 동작하며, 실계정·실제
+Keychain·외부 MCP host의 검증은 별도 경계로 남긴다.
 
 ## 소유권과 경계
 
@@ -143,10 +144,12 @@ transaction에서 적용한다.
 않으며 native Keychain, iCloud hydration, 실제 GitHub 권한을 증명하지
 않는다.
 
-## 후속 IPC 경계
+## IPC 경계
 
-M1 이후 Tauri command를 추가할 때 command는 앱 데이터 디렉터리에서
-`Core::open`을 한 번 관리하고 위 request/response 타입만 전달한다. M4의
-CLI/MCP도 같은 코어에 인증된 로컬 IPC로 연결한다. 여러 MCP 프로세스가
+Tauri command는 앱 데이터 디렉터리에서 `Core::open`을 한 번 관리하고 위
+request/response 타입만 전달한다. M4의 CLI/MCP도 같은 코어에 인증된 로컬
+IPC로 연결한다. 여러 MCP 프로세스가
 SQLite 파일을 직접 열지 않도록 코어 소유 프로세스와 소켓 권한을 별도로
-검증해야 한다.
+검증한다. standalone `aidebook-core`는 동일한 lock/socket/token 경계를
+사용하는 owner 선택지이며, CLI/MCP는 어느 경우에도 DB path나 SQL을 받지
+않는다.

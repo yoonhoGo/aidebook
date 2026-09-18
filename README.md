@@ -21,9 +21,10 @@ user-reviewable in-app memories.
 The first UI slice mirrors the planned focus: work contexts on the left,
 memory and activity in the centre, and source evidence on the right. Work
 context navigation, note creation/editing, revision restore, search, source
-scope dialogs, settings, and keyboard shortcuts are functional. Notes,
-activities, settings, and the current session are persisted in the local
-webview storage for now.
+scope dialogs, explicit native vault/repository selection and refresh, settings,
+and keyboard shortcuts are functional. Existing notes, activities, settings,
+and session state remain in local webview storage; in the native runtime,
+memory writes are committed to Core first and mirrored into that UI state.
 
 ## Development
 
