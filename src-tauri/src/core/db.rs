@@ -1959,17 +1959,6 @@ impl Database {
                     stale_sources.push(neighbor.source);
                     continue;
                 }
-                if !visited.contains(&neighbor_id)
-                    && !frontier
-                        .iter()
-                        .any(|(source_id, _)| source_id == &neighbor_id)
-                {
-                    if nodes.len() + frontier.len() >= max_nodes {
-                        truncated = true;
-                        break;
-                    }
-                    frontier.push_back((neighbor_id.clone(), depth + 1));
-                }
                 let neighbor_edge_hash = if row.from_source_id == current_id {
                     row.target_hash.as_deref().unwrap_or_default()
                 } else {
@@ -1995,6 +1984,39 @@ impl Database {
                     stale_sources.push(current_source.clone());
                     stale_sources.push(neighbor.source.clone());
                     continue;
+                }
+                if edge.provenance == GraphProvenance::Explicit {
+                    let still_present: bool = transaction
+                        .query_row(
+                            "SELECT EXISTS(SELECT 1 FROM relations
+                             WHERE from_source_id = ?1 AND to_source_id = ?2
+                               AND relation_type = ?3 AND reason = ?4)",
+                            params![
+                                edge.from_source_id,
+                                edge.to_source_id,
+                                edge.relation_type,
+                                edge.evidence_location.as_deref().unwrap_or("")
+                            ],
+                            |row| row.get(0),
+                        )
+                        .map_err(database_error)?;
+                    if !still_present {
+                        stale_sources.push(current_source.clone());
+                        continue;
+                    }
+                }
+                // Only a validated edge may make a neighbor reachable. Otherwise
+                // a revoked relation or changed URL could still return its node.
+                if !visited.contains(&neighbor_id)
+                    && !frontier
+                        .iter()
+                        .any(|(source_id, _)| source_id == &neighbor_id)
+                {
+                    if nodes.len() + frontier.len() >= max_nodes {
+                        truncated = true;
+                        break;
+                    }
+                    frontier.push_back((neighbor_id.clone(), depth + 1));
                 }
                 edges.push(edge);
             }
