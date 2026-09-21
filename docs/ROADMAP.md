@@ -28,6 +28,24 @@ macOS Apple Silicon, 볼트 1개와 선택한 GitHub 저장소 읽기, 로컬 �
 
 M0 → M1 → M2 → M3 → M4 → M5 순서로 작은 jj 변경을 만든다. 메모 저장 불변조건은 M0에서 먼저 검증하고 사용자 흐름은 M3에서 통합한다. 예상 일정은 M0 검증 후 산정한다.
 
+## 메모리·지식 그래프 확장 계획
+
+`docs/AGENT_MEMORY_GRAPH_RESEARCH.md`의 조사 결과를 현재 Core에 적용하는
+후속 G1–G4 작업이다. 이 계획은 외부 Neo4j·벡터 DB·LLM·완전한 언어
+파서를 추가하지 않고, SQLite/FTS5와 기존 단일 Core 소유권을 확장한다.
+각 단계는 앞 단계의 계약과 테스트가 통과된 뒤 별도 jj 변경으로 기록한다.
+
+| 단계 | 구현 범위 | 완료 기준 | 명시적 경계 |
+|---|---|---|---|
+| G1 파생 문서 그래프 | snapshot에서 명시 URL/Obsidian wikilink를 namespace·path로 해석하고 별도 graph node/edge 테이블에 deterministic/extracted/inferred provenance, 근거 위치, confidence, content+link digest, build ID를 저장한다. bounded 1-hop/다중 hop traversal, stale·접근 불가·삭제 edge 제외, rebuild를 제공한다. | 같은 제목의 다른 namespace는 연결하지 않음, 모호하거나 외부인 target은 edge를 만들지 않음, 링크만 바뀌어도 digest/build이 갱신됨, 재빌드가 중복 없이 수렴하며 이전 명시 `relations`를 바꾸지 않음, revoked/deleted snapshot 본문·snippet이 graph/context에서 노출되지 않음. | 완전한 Tree-sitter/코드 컴파일러 분석과 모델 추론은 후속 작업이다. graph는 canonical user relation이 아닌 derived data다. |
+| G2 관찰·메모리 후보 | observation을 captured→distilled→proposed→accepted/rejected로 보존하고 evidence/version/idempotency digest를 가진 candidate를 만든다. accepted만 기존 `memories`/`memory_revisions`를 재사용해 canonical memory로 promotion한다. | 상태 전이 규칙과 actor/reason/evidence를 검증하고, acceptance가 candidate 상태·canonical memory·revision을 하나의 transaction으로 갱신한다. 중복 acceptance와 conflicting idempotency가 원자적으로 거부/재생된다. 사용자 검토 경계는 Tauri route에만 둔다. | MCP에는 observation/candidate 조회·propose만 노출하고 자동 acceptance 도구를 노출하지 않는다. 외부 서비스/LLM은 사용하지 않는다. |
+| G3 작업 중심 context.query.v1 | lexical snapshot 검색, memory 검색, graph traversal, freshness/evidence/unavailable/conflict를 한 응답에 묶은 versioned query contract와 bounds를 추가한다. 기존 여섯 IPC method semantics를 유지하고 IPC/CLI/MCP/Tauri에서 사용 가능한 read/propose 경로를 추가한다. | 결과에 source/memory/graph provenance와 fresh/stale/unavailable 상태가 명시되고, max nodes/edges/memories와 query length가 강제된다. legacy method regression, access revocation·stale/rebuild·candidate lifecycle 검증이 통과한다. | 현재 검색은 FTS5 lexical이며 vector/rerank는 후속이다. context.query.v1은 read-only다. |
+| G4 Markdown 교환·검토 UI | evidence/revision/wikilink를 포함하는 deterministic Markdown export와 review candidate 전용 safe import를 제공한다. canonical memory 자동 승격이나 외부 vault write 없이 Tauri review/graph/query/exchange 설정 패널을 기존 UI 스타일에 맞춰 추가한다. | export가 반복 실행해도 같은 결과를 내고 evidence/revision이 보존된다. import는 경로·형식·evidence를 검증해 후보로만 저장하며 traversal/path escape와 임의 외부 쓰기를 거부한다. 기존 UI 상태·스타일과 localStorage를 보존한다. | 실제 native Tauri window, Keychain, iCloud/FSEvents, live provider, WebGL은 이 작업으로 증명하지 않는다. |
+
+상태 문서에는 단계별 change ID와 실행한 검증을 기록한다. 구현 계획에 없는
+기능은 이 확장 작업에 포함하지 않으며, native/live 경계는 fixture·in-memory
+테스트의 통과와 분리해 보고한다.
+
 ## 공통 계약
 
 - SourceRef: 공급자·계정·외부 ID·정규 URL·유형. Snapshot: 본문·제목·내용 해시·source_updated_at·fetched_at·접근 상태.
