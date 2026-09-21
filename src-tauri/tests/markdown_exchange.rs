@@ -98,6 +98,63 @@ fn import_uses_edited_body_and_is_idempotent_without_auto_acceptance() {
 }
 
 #[test]
+fn export_import_preserves_fenced_headings_and_trailing_body_whitespace() {
+    let body = "# Body\n## Memory: fake\n### Aidebook Revisions\n~~~\ncode\n~~~\n끝  \n\n";
+    let exporter = Core::in_memory().unwrap();
+    seed_memory(&exporter, "one", body);
+    let markdown = exporter.memory_export_markdown().unwrap();
+
+    let importer = Core::in_memory().unwrap();
+    importer
+        .ingest_snapshot(Snapshot::new(
+            source("one"),
+            "Imported source",
+            "Evidence source",
+            None,
+            "2026-09-21T00:00:00Z",
+        ))
+        .unwrap();
+    let result = importer.memory_import_markdown(markdown).unwrap();
+
+    assert_eq!(result.candidates.len(), 1);
+    assert_eq!(result.candidates[0].body, body);
+}
+
+#[test]
+fn unclosed_body_fence_rejects_all_documents_atomically() {
+    let exporter = Core::in_memory().unwrap();
+    seed_memory(&exporter, "one", "First body.");
+    seed_memory(&exporter, "two", "Second body.");
+    let markdown = exporter.memory_export_markdown().unwrap();
+    let closing = "~~~\n### Aidebook Revisions";
+    let position = markdown.rfind(closing).unwrap();
+    let malformed = format!("{}~~{}", &markdown[..position], &markdown[position + 3..]);
+
+    let importer = Core::in_memory().unwrap();
+    importer
+        .ingest_snapshot(Snapshot::new(
+            source("one"),
+            "One",
+            "Evidence",
+            None,
+            "2026-09-21T00:00:00Z",
+        ))
+        .unwrap();
+    importer
+        .ingest_snapshot(Snapshot::new(
+            source("two"),
+            "Two",
+            "Evidence",
+            None,
+            "2026-09-21T00:00:00Z",
+        ))
+        .unwrap();
+
+    assert!(importer.memory_import_markdown(malformed).is_err());
+    assert!(importer.candidates(None).unwrap().is_empty());
+}
+
+#[test]
 fn malformed_later_section_rolls_back_every_candidate() {
     let exporter = Core::in_memory().unwrap();
     seed_memory(&exporter, "one", "First body.");

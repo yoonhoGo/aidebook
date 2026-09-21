@@ -2695,7 +2695,10 @@ impl Database {
             output.push_str("### Aidebook Body\n");
             let fence = markdown_fence(&memory.body);
             output.push_str(&format!("{fence}markdown\n"));
-            output.push_str(memory.body.trim_end());
+            // Keep the body byte-for-byte intact. The one newline below is a
+            // delimiter before the closing fence, so the importer can remove
+            // exactly that delimiter without trimming user Markdown.
+            output.push_str(&memory.body);
             output.push('\n');
             output.push_str(&format!("{fence}\n"));
             output.push_str("### Aidebook Revisions\n");
@@ -2987,6 +2990,132 @@ fn markdown_import_error(field: &str, message: impl Into<String>) -> CoreError {
     }
 }
 
+#[derive(Clone, Copy)]
+struct ExchangeLine {
+    start: usize,
+    end: usize,
+    next: usize,
+}
+
+impl ExchangeLine {
+    fn text<'a>(self, markdown: &'a str) -> &'a str {
+        &markdown[self.start..self.end]
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ExchangeFence {
+    marker: u8,
+    length: usize,
+}
+
+fn exchange_lines(markdown: &str) -> Vec<ExchangeLine> {
+    let bytes = markdown.as_bytes();
+    let mut lines = Vec::new();
+    let mut start = 0;
+    for (index, byte) in bytes.iter().enumerate() {
+        if *byte != b'\n' {
+            continue;
+        }
+        let mut end = index;
+        if end > start && bytes[end - 1] == b'\r' {
+            end -= 1;
+        }
+        lines.push(ExchangeLine {
+            start,
+            end,
+            next: index + 1,
+        });
+        start = index + 1;
+    }
+    if start < bytes.len() {
+        let mut end = bytes.len();
+        if end > start && bytes[end - 1] == b'\r' {
+            end -= 1;
+        }
+        lines.push(ExchangeLine {
+            start,
+            end,
+            next: bytes.len(),
+        });
+    }
+    lines
+}
+
+fn exchange_fence_marker(line: &str) -> Option<ExchangeFence> {
+    let trimmed = line.trim_start();
+    let marker = *trimmed.as_bytes().first()?;
+    if marker != b'~' && marker != b'`' {
+        return None;
+    }
+    let length = trimmed
+        .as_bytes()
+        .iter()
+        .take_while(|byte| **byte == marker)
+        .count();
+    (length >= 3).then_some(ExchangeFence { marker, length })
+}
+
+fn exchange_fence_closes(line: &str, fence: ExchangeFence) -> bool {
+    let trimmed = line.trim();
+    let bytes = trimmed.as_bytes();
+    if bytes.first().copied() != Some(fence.marker) {
+        return false;
+    }
+    let length = bytes
+        .iter()
+        .take_while(|byte| **byte == fence.marker)
+        .count();
+    length >= fence.length && trimmed[length..].trim().is_empty()
+}
+
+fn top_level_memory_starts(lines: &[ExchangeLine], markdown: &str) -> Vec<usize> {
+    let mut starts = Vec::new();
+    let mut fence = None;
+    for (index, line) in lines.iter().copied().enumerate() {
+        let text = line.text(markdown);
+        if let Some(active) = fence {
+            if exchange_fence_closes(text, active) {
+                fence = None;
+            }
+            continue;
+        }
+        if let Some(opening) = exchange_fence_marker(text) {
+            fence = Some(opening);
+            continue;
+        }
+        if text.starts_with("## Memory: ") {
+            starts.push(index);
+        }
+    }
+    starts
+}
+
+fn top_level_heading_position(
+    lines: &[ExchangeLine],
+    markdown: &str,
+    heading: &str,
+) -> Option<usize> {
+    let mut fence = None;
+    for (index, line) in lines.iter().copied().enumerate() {
+        let text = line.text(markdown);
+        if let Some(active) = fence {
+            if exchange_fence_closes(text, active) {
+                fence = None;
+            }
+            continue;
+        }
+        if let Some(opening) = exchange_fence_marker(text) {
+            fence = Some(opening);
+            continue;
+        }
+        if text == heading {
+            return Some(index);
+        }
+    }
+    None
+}
+
 fn parse_memory_exchange(markdown: &str) -> CoreResult<Vec<ImportedMemoryDocument>> {
     if markdown.len() > 2 * 1024 * 1024 {
         return Err(markdown_import_error(
@@ -2994,18 +3123,17 @@ fn parse_memory_exchange(markdown: &str) -> CoreResult<Vec<ImportedMemoryDocumen
             "exchange text must not exceed 2 MiB",
         ));
     }
-    let lines = markdown.lines().collect::<Vec<_>>();
-    if lines.first().copied() != Some("<!-- aidebook-memory-exchange:v1 -->") {
+    let lines = exchange_lines(markdown);
+    if lines
+        .first()
+        .is_none_or(|line| line.text(markdown) != "<!-- aidebook-memory-exchange:v1 -->")
+    {
         return Err(markdown_import_error(
             "markdown",
             "the v1 exchange header is required",
         ));
     }
-    let starts = lines
-        .iter()
-        .enumerate()
-        .filter_map(|(index, line)| line.strip_prefix("## Memory: ").map(|_| index))
-        .collect::<Vec<_>>();
+    let starts = top_level_memory_starts(&lines, markdown);
     if starts.is_empty() {
         return Err(markdown_import_error(
             "markdown",
@@ -3017,6 +3145,7 @@ fn parse_memory_exchange(markdown: &str) -> CoreResult<Vec<ImportedMemoryDocumen
     for (position, start) in starts.iter().enumerate() {
         let end = starts.get(position + 1).copied().unwrap_or(lines.len());
         let header_id = lines[*start]
+            .text(markdown)
             .strip_prefix("## Memory: ")
             .unwrap_or_default()
             .trim();
@@ -3033,13 +3162,10 @@ fn parse_memory_exchange(markdown: &str) -> CoreResult<Vec<ImportedMemoryDocumen
             ));
         }
         let section = &lines[*start + 1..end];
-        let evidence_heading = section
-            .iter()
-            .position(|line| *line == "### Aidebook Evidence")
-            .ok_or_else(|| markdown_import_error("evidence", "evidence heading is required"))?;
-        let body_heading = section
-            .iter()
-            .position(|line| *line == "### Aidebook Body")
+        let evidence_heading =
+            top_level_heading_position(section, markdown, "### Aidebook Evidence")
+                .ok_or_else(|| markdown_import_error("evidence", "evidence heading is required"))?;
+        let body_heading = top_level_heading_position(section, markdown, "### Aidebook Body")
             .ok_or_else(|| markdown_import_error("body", "body heading is required"))?;
         if evidence_heading >= body_heading {
             return Err(markdown_import_error(
@@ -3047,18 +3173,9 @@ fn parse_memory_exchange(markdown: &str) -> CoreResult<Vec<ImportedMemoryDocumen
                 "evidence must appear before the body",
             ));
         }
-        let revision_heading = section
-            .iter()
-            .position(|line| *line == "### Aidebook Revisions")
-            .unwrap_or(section.len());
-        if revision_heading <= body_heading {
-            return Err(markdown_import_error(
-                "markdown",
-                "revision heading must follow the body",
-            ));
-        }
         let mut metadata = HashMap::new();
         for line in &section[..evidence_heading] {
+            let line = line.text(markdown);
             let Some(value) = line.strip_prefix("- ") else {
                 if line.trim().is_empty() {
                     continue;
@@ -3102,6 +3219,7 @@ fn parse_memory_exchange(markdown: &str) -> CoreResult<Vec<ImportedMemoryDocumen
         let _ = parse_optional_string(&metadata, "supersedes_id")?;
         let mut evidence = Vec::new();
         for line in &section[evidence_heading + 1..body_heading] {
+            let line = line.text(markdown);
             let trimmed = line.trim();
             if trimmed.is_empty() || trimmed.starts_with("wikilink:") {
                 continue;
@@ -3148,28 +3266,52 @@ fn parse_memory_exchange(markdown: &str) -> CoreResult<Vec<ImportedMemoryDocumen
         }
         let body_start = section
             .iter()
-            .position(|line| line.starts_with('~') && line.ends_with("markdown"))
+            .position(|line| {
+                let line = line.text(markdown);
+                line.starts_with('~') && line.ends_with("markdown")
+            })
             .ok_or_else(|| markdown_import_error("body", "a markdown body fence is required"))?;
-        if body_start <= body_heading || body_start >= revision_heading {
+        if body_start <= body_heading {
             return Err(markdown_import_error("body", "body fence is malformed"));
         }
-        let opening = section[body_start];
+        let opening = section[body_start].text(markdown);
         let fence = opening.strip_suffix("markdown").unwrap_or_default();
         if fence.len() < 3 || !fence.chars().all(|character| character == '~') {
             return Err(markdown_import_error("body", "body fence is malformed"));
         }
-        let closing = (body_start + 1..revision_heading)
-            .find(|index| section[*index] == fence)
+        let closing = (body_start + 1..section.len())
+            .find(|index| section[*index].text(markdown) == fence)
             .ok_or_else(|| markdown_import_error("body", "body fence is not closed"))?;
-        let body = section[body_start + 1..closing].join("\n");
+        let raw_body = &markdown[section[body_start].next..section[closing].start];
+        let body = if let Some(body) = raw_body.strip_suffix("\r\n") {
+            body.to_string()
+        } else if let Some(body) = raw_body.strip_suffix('\n') {
+            body.to_string()
+        } else {
+            return Err(markdown_import_error(
+                "body",
+                "body fence must start on a new line",
+            ));
+        };
         if body.trim().is_empty() {
             return Err(markdown_import_error("body", "must not be empty"));
         }
         if contains_credential_marker(&body) || contains_credential_marker(&reason) {
             return Err(CoreError::SensitiveDataRejected);
         }
+        let revision_heading = section[closing + 1..]
+            .iter()
+            .position(|line| line.text(markdown) == "### Aidebook Revisions")
+            .map(|position| closing + 1 + position)
+            .unwrap_or(section.len());
+        if revision_heading <= body_heading {
+            return Err(markdown_import_error(
+                "markdown",
+                "revision heading must follow the body",
+            ));
+        }
         for line in &section[closing + 1..revision_heading] {
-            if !line.trim().is_empty() {
+            if !line.text(markdown).trim().is_empty() {
                 return Err(markdown_import_error(
                     "body",
                     "only blank lines may follow the body fence",
@@ -3177,7 +3319,7 @@ fn parse_memory_exchange(markdown: &str) -> CoreResult<Vec<ImportedMemoryDocumen
             }
         }
         for line in section.get(revision_heading + 1..).unwrap_or_default() {
-            let trimmed = line.trim();
+            let trimmed = line.text(markdown).trim();
             if trimmed.is_empty() {
                 continue;
             }
