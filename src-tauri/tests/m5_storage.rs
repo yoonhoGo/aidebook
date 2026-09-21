@@ -1,6 +1,7 @@
 use aidebook_lib::core::{
     AccessStatus, Core, CoreError, MemoryUpsertInput, SearchRequest, Snapshot, SourceRef,
 };
+use rusqlite::Connection;
 use std::fs;
 use std::path::PathBuf;
 use uuid::Uuid;
@@ -62,7 +63,7 @@ fn backup_restore_is_integrity_checked_and_cache_clear_preserves_memories() {
     })
     .expect("memory");
     let backup_result = core.backup_to(&backup).expect("backup");
-    assert_eq!(backup_result.schema_version, 4);
+    assert_eq!(backup_result.schema_version, 6);
     core.ingest_snapshot(second_snapshot)
         .expect("second snapshot");
     assert_eq!(search(&core, "second"), 1);
@@ -100,6 +101,52 @@ fn corrupt_restore_does_not_replace_active_database() {
     let error = core.restore_from(&corrupt).expect_err("corrupt restore");
     assert!(matches!(error, CoreError::Database { .. }));
     assert_eq!(search(&core, "safe"), 1);
+    fs::remove_dir_all(directory).expect("cleanup");
+}
+
+#[test]
+fn restoring_a_v4_backup_migrates_only_the_staged_copy() {
+    let directory = PathBuf::from(format!("/tmp/aidebook-m5-v4-{}", Uuid::new_v4()));
+    fs::create_dir_all(&directory).expect("directory");
+    let database = directory.join("aidebook.sqlite");
+    let backup = directory.join("aidebook-v6.sqlite");
+    let legacy = directory.join("aidebook-v4.sqlite");
+    let core = Core::open(&database).expect("database");
+    let (source, snapshot) = source("legacy");
+    core.ingest_snapshot(snapshot).expect("snapshot");
+    core.upsert_memory(MemoryUpsertInput {
+        id: None,
+        body: "legacy memory".to_string(),
+        reason: "migration test".to_string(),
+        evidence: vec![source],
+        author: "user".to_string(),
+        claim_type: "decision".to_string(),
+        idempotency_key: "legacy-memory".to_string(),
+        expected_version: None,
+        supersedes_id: None,
+    })
+    .expect("memory");
+    core.backup_to(&backup).expect("backup");
+    fs::copy(&backup, &legacy).expect("legacy copy");
+    {
+        let connection = Connection::open(&legacy).expect("legacy sqlite");
+        connection
+            .execute_batch(
+                "DROP TABLE graph_edges;
+                 DROP TABLE graph_nodes;
+                 DROP TABLE graph_builds;
+                 DELETE FROM schema_migrations WHERE version > 4;",
+            )
+            .expect("strip newer graph migrations");
+    }
+    let before = fs::read(&legacy).expect("legacy bytes");
+    let result = core.restore_from(&legacy).expect("restore legacy backup");
+    assert_eq!(result.schema_version, 6);
+    assert_eq!(
+        fs::read(&legacy).expect("legacy bytes after restore"),
+        before
+    );
+    assert_eq!(search(&core, "legacy"), 1);
     fs::remove_dir_all(directory).expect("cleanup");
 }
 

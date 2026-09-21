@@ -7,9 +7,9 @@
 use super::types::*;
 use chrono::Utc;
 use rusqlite::types::Value;
-use rusqlite::{params, params_from_iter, Connection, OptionalExtension, Transaction};
+use rusqlite::{params, params_from_iter, Connection, OpenFlags, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ops::Deref;
 use std::path::Path;
 use std::sync::Mutex;
@@ -152,6 +152,66 @@ const MIGRATIONS: &[(i64, &str)] = &[
         );
         CREATE INDEX IF NOT EXISTS idx_ui_memories_work_updated
             ON ui_memories(work, updated_at DESC);
+        "#,
+    ),
+    (
+        5,
+        r#"
+        CREATE TABLE IF NOT EXISTS graph_builds (
+            build_id TEXT PRIMARY KEY NOT NULL,
+            scope_provider TEXT,
+            scope_account_id TEXT,
+            digest TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            node_count INTEGER NOT NULL DEFAULT 0,
+            edge_count INTEGER NOT NULL DEFAULT 0,
+            skipped_links INTEGER NOT NULL DEFAULT 0,
+            ambiguous_links INTEGER NOT NULL DEFAULT 0,
+            diagnostics_json TEXT NOT NULL DEFAULT '[]',
+            is_current INTEGER NOT NULL DEFAULT 0 CHECK (is_current IN (0, 1))
+        );
+
+        CREATE TABLE IF NOT EXISTS graph_nodes (
+            build_id TEXT NOT NULL REFERENCES graph_builds(build_id) ON DELETE CASCADE,
+            source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+            title TEXT NOT NULL,
+            snapshot_hash TEXT NOT NULL,
+            link_digest TEXT NOT NULL,
+            access_status TEXT NOT NULL,
+            is_deleted INTEGER NOT NULL DEFAULT 0 CHECK (is_deleted IN (0, 1)),
+            PRIMARY KEY(build_id, source_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS graph_edges (
+            id TEXT PRIMARY KEY NOT NULL,
+            build_id TEXT NOT NULL REFERENCES graph_builds(build_id) ON DELETE CASCADE,
+            from_source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+            to_source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+            relation_type TEXT NOT NULL,
+            provenance TEXT NOT NULL,
+            evidence_location TEXT,
+            confidence REAL,
+            source_hash TEXT NOT NULL,
+            target_hash TEXT,
+            stale INTEGER NOT NULL DEFAULT 0 CHECK (stale IN (0, 1)),
+            UNIQUE(build_id, from_source_id, to_source_id, relation_type, provenance)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_graph_builds_current
+            ON graph_builds(is_current, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_graph_nodes_source
+            ON graph_nodes(build_id, source_id);
+        CREATE INDEX IF NOT EXISTS idx_graph_edges_from
+            ON graph_edges(build_id, from_source_id, stale);
+        CREATE INDEX IF NOT EXISTS idx_graph_edges_to
+            ON graph_edges(build_id, to_source_id, stale);
+        "#,
+    ),
+    (
+        6,
+        r#"
+        ALTER TABLE graph_edges ADD COLUMN source_url TEXT NOT NULL DEFAULT '';
+        ALTER TABLE graph_edges ADD COLUMN target_url TEXT;
         "#,
     ),
 ];
@@ -735,6 +795,609 @@ impl Database {
         })
     }
 
+    /// Rebuilds the derived document graph from the current snapshot cache.
+    /// The graph is deliberately a separate projection: explicit relations
+    /// remain canonical, while extracted links are rebuilt from snapshot
+    /// content and carry their own hashes and build ID.
+    pub fn rebuild_graph(&self, request: GraphRebuildRequest) -> CoreResult<GraphRebuildResponse> {
+        request.validate()?;
+        let mut connection = self.lock()?;
+        let transaction = connection.transaction().map_err(database_error)?;
+
+        let mut sql = String::from(
+            "SELECT s.id, s.provider, s.account_id, s.external_id, s.url, s.kind,
+                    sn.title, sn.body, sn.content_hash, sn.access_status,
+                    sn.is_deleted, sn.links_json
+             FROM sources s JOIN snapshots sn ON sn.source_id = s.id",
+        );
+        let mut values = Vec::new();
+        let mut clauses = Vec::new();
+        if let Some(provider) = request.provider.as_deref() {
+            clauses.push("s.provider = ?".to_string());
+            values.push(Value::Text(provider.to_string()));
+        }
+        if let Some(account_id) = request.account_id.as_deref() {
+            clauses.push("s.account_id = ?".to_string());
+            values.push(Value::Text(account_id.to_string()));
+        }
+        if !clauses.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&clauses.join(" AND "));
+        }
+        sql.push_str(" ORDER BY s.id");
+        let mut statement = transaction.prepare(&sql).map_err(database_error)?;
+        let rows = statement
+            .query_map(params_from_iter(values.iter()), |row| {
+                let links_json: String = row.get(11)?;
+                let links =
+                    serde_json::from_str::<Vec<SourceLink>>(&links_json).map_err(|error| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            11,
+                            rusqlite::types::Type::Text,
+                            Box::new(error),
+                        )
+                    })?;
+                Ok(GraphSnapshotRow {
+                    source_id: row.get(0)?,
+                    source: SourceRef {
+                        provider: row.get(1)?,
+                        account_id: row.get(2)?,
+                        external_id: row.get(3)?,
+                        url: row.get(4)?,
+                        kind: row.get(5)?,
+                    },
+                    title: row.get(6)?,
+                    body: row.get(7)?,
+                    content_hash: row.get(8)?,
+                    access_status: row.get(9)?,
+                    is_deleted: row.get::<_, i64>(10)? != 0,
+                    links,
+                })
+            })
+            .map_err(database_error)?;
+        let mut snapshots = Vec::new();
+        for row in rows {
+            snapshots.push(row.map_err(database_error)?);
+        }
+        drop(statement);
+
+        let mut link_sets = Vec::with_capacity(snapshots.len());
+        for snapshot in &snapshots {
+            link_sets.push(extract_graph_links(&snapshot.body, &snapshot.links));
+        }
+        let mut digest_parts = Vec::with_capacity(snapshots.len() + 2);
+        digest_parts.push(format!(
+            "provider={};account={}",
+            request.provider.as_deref().unwrap_or("*"),
+            request.account_id.as_deref().unwrap_or("*")
+        ));
+        for (snapshot, links) in snapshots.iter().zip(&link_sets) {
+            digest_parts.push(format!(
+                "{}|{}|{}|{}|{}|{}|{}",
+                snapshot.source_id,
+                snapshot.source.provider,
+                snapshot.source.account_id,
+                snapshot.source.url,
+                snapshot.content_hash,
+                graph_link_digest(links),
+                snapshot.access_status,
+            ));
+            if snapshot.is_deleted {
+                digest_parts.push(format!("{}|deleted", snapshot.source_id));
+            }
+        }
+        let mut digest_relation_statement = transaction
+            .prepare(
+                "SELECT from_source_id, to_source_id, relation_type, reason
+                 FROM relations ORDER BY from_source_id, to_source_id, relation_type",
+            )
+            .map_err(database_error)?;
+        let digest_relations = digest_relation_statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })
+            .map_err(database_error)?;
+        for relation in digest_relations {
+            let (from, to, relation_type, reason) = relation.map_err(database_error)?;
+            digest_parts.push(format!("relation|{from}|{to}|{relation_type}|{reason}"));
+        }
+        drop(digest_relation_statement);
+        let digest = sha256_hex(digest_parts.join("\n").as_bytes());
+        let build_id = format!("graph_{}", &digest[..24]);
+        let created_at = now_rfc3339();
+        let scope_provider = request.provider.clone();
+        let scope_account_id = request.account_id.clone();
+
+        transaction
+            .execute(
+                "UPDATE graph_builds SET is_current = 0 WHERE is_current = 1",
+                [],
+            )
+            .map_err(database_error)?;
+        transaction
+            .execute(
+                "INSERT INTO graph_builds
+                    (build_id, scope_provider, scope_account_id, digest, created_at,
+                     node_count, edge_count, skipped_links, ambiguous_links,
+                     diagnostics_json, is_current)
+                 VALUES (?1, ?2, ?3, ?4, ?5, 0, 0, 0, 0, '[]', 1)
+                 ON CONFLICT(build_id) DO UPDATE SET
+                    scope_provider = excluded.scope_provider,
+                    scope_account_id = excluded.scope_account_id,
+                    digest = excluded.digest,
+                    created_at = excluded.created_at,
+                    node_count = 0,
+                    edge_count = 0,
+                    skipped_links = 0,
+                    ambiguous_links = 0,
+                    diagnostics_json = '[]',
+                    is_current = 1",
+                params![
+                    build_id,
+                    scope_provider,
+                    scope_account_id,
+                    digest,
+                    created_at,
+                ],
+            )
+            .map_err(database_error)?;
+        transaction
+            .execute(
+                "DELETE FROM graph_edges WHERE build_id = ?1",
+                params![build_id],
+            )
+            .map_err(database_error)?;
+        transaction
+            .execute(
+                "DELETE FROM graph_nodes WHERE build_id = ?1",
+                params![build_id],
+            )
+            .map_err(database_error)?;
+
+        let mut diagnostics = Vec::new();
+        for snapshot in &snapshots {
+            let links = extract_graph_links(&snapshot.body, &snapshot.links);
+            transaction
+                .execute(
+                    "INSERT INTO graph_nodes
+                        (build_id, source_id, title, snapshot_hash, link_digest,
+                         access_status, is_deleted)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    params![
+                        build_id,
+                        snapshot.source_id,
+                        snapshot.title,
+                        snapshot.content_hash,
+                        graph_link_digest(&links),
+                        snapshot.access_status,
+                        snapshot.is_deleted as i64,
+                    ],
+                )
+                .map_err(database_error)?;
+        }
+
+        let rows_by_id = snapshots
+            .iter()
+            .map(|snapshot| (snapshot.source_id.clone(), snapshot))
+            .collect::<HashMap<_, _>>();
+        let mut unique_urls: HashMap<&str, Vec<&GraphSnapshotRow>> = HashMap::new();
+        for snapshot in &snapshots {
+            unique_urls
+                .entry(snapshot.source.url.as_str())
+                .or_default()
+                .push(snapshot);
+        }
+        let mut by_namespace: HashMap<(&str, &str, String), Vec<&GraphSnapshotRow>> =
+            HashMap::new();
+        for snapshot in &snapshots {
+            by_namespace
+                .entry((
+                    snapshot.source.provider.as_str(),
+                    snapshot.source.account_id.as_str(),
+                    normalize_path(&snapshot.source.external_id),
+                ))
+                .or_default()
+                .push(snapshot);
+        }
+
+        let mut skipped_links = 0usize;
+        let mut ambiguous_links = 0usize;
+        for (snapshot, links) in snapshots.iter().zip(&link_sets) {
+            if snapshot.access_status != "accessible" || snapshot.is_deleted {
+                continue;
+            }
+            for link in links {
+                let kind = if link.kind.trim().is_empty() {
+                    "reference"
+                } else {
+                    link.kind.as_str()
+                };
+                let candidates = if matches!(kind, "url" | "reference")
+                    && (link.target.starts_with("http://")
+                        || link.target.starts_with("https://")
+                        || link.target.starts_with("obsidian://"))
+                {
+                    unique_urls
+                        .get(link.target.as_str())
+                        .cloned()
+                        .unwrap_or_default()
+                } else {
+                    let target = normalize_wikilink_target(&link.target);
+                    by_namespace
+                        .get(&(
+                            snapshot.source.provider.as_str(),
+                            snapshot.source.account_id.as_str(),
+                            target,
+                        ))
+                        .cloned()
+                        .unwrap_or_default()
+                };
+                if candidates.len() != 1 {
+                    if candidates.is_empty() {
+                        skipped_links += 1;
+                        diagnostics.push(format!(
+                            "unresolved graph link: {} -> {}",
+                            snapshot.source.external_id, link.target
+                        ));
+                    } else {
+                        ambiguous_links += 1;
+                        diagnostics.push(format!(
+                            "ambiguous graph link: {} -> {}",
+                            snapshot.source.external_id, link.target
+                        ));
+                    }
+                    continue;
+                }
+                let target = candidates[0];
+                let edge_id = graph_edge_id(
+                    &build_id,
+                    &snapshot.source_id,
+                    &target.source_id,
+                    kind,
+                    GraphProvenance::Extracted.as_str(),
+                );
+                let stale = target.access_status != "accessible" || target.is_deleted;
+                transaction
+                    .execute(
+                        "INSERT OR IGNORE INTO graph_edges
+                            (id, build_id, from_source_id, to_source_id, relation_type,
+                             provenance, evidence_location, confidence, source_hash,
+                             target_hash, stale, source_url, target_url)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, 1.0, ?7, ?8, ?9, ?10, ?11)",
+                        params![
+                            edge_id,
+                            build_id,
+                            snapshot.source_id,
+                            target.source_id,
+                            kind,
+                            GraphProvenance::Extracted.as_str(),
+                            snapshot.content_hash,
+                            target.content_hash,
+                            stale as i64,
+                            snapshot.source.url,
+                            target.source.url,
+                        ],
+                    )
+                    .map_err(database_error)?;
+            }
+        }
+
+        let mut relation_statement = transaction
+            .prepare(
+                "SELECT r.from_source_id, r.to_source_id, r.relation_type, r.reason
+                 FROM relations r ORDER BY r.from_source_id, r.to_source_id, r.relation_type",
+            )
+            .map_err(database_error)?;
+        let relations = relation_statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })
+            .map_err(database_error)?;
+        let mut relation_values = Vec::new();
+        for relation in relations {
+            relation_values.push(relation.map_err(database_error)?);
+        }
+        drop(relation_statement);
+        for (from_id, to_id, relation_type, reason) in relation_values {
+            let (Some(from), Some(to)) = (rows_by_id.get(&from_id), rows_by_id.get(&to_id)) else {
+                continue;
+            };
+            let edge_id = graph_edge_id(
+                &build_id,
+                &from_id,
+                &to_id,
+                &relation_type,
+                GraphProvenance::Explicit.as_str(),
+            );
+            let stale = from.access_status != "accessible"
+                || from.is_deleted
+                || to.access_status != "accessible"
+                || to.is_deleted;
+            transaction
+                .execute(
+                    "INSERT OR IGNORE INTO graph_edges
+                        (id, build_id, from_source_id, to_source_id, relation_type,
+                         provenance, evidence_location, confidence, source_hash,
+                         target_hash, stale, source_url, target_url)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, ?8, ?9, ?10, ?11, ?12)",
+                    params![
+                        edge_id,
+                        build_id,
+                        from_id,
+                        to_id,
+                        relation_type,
+                        GraphProvenance::Explicit.as_str(),
+                        reason,
+                        from.content_hash,
+                        to.content_hash,
+                        stale as i64,
+                        from.source.url,
+                        to.source.url,
+                    ],
+                )
+                .map_err(database_error)?;
+        }
+
+        let node_count = transaction
+            .query_row(
+                "SELECT COUNT(*) FROM graph_nodes WHERE build_id = ?1",
+                params![build_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(database_error)? as usize;
+        let edge_count = transaction
+            .query_row(
+                "SELECT COUNT(*) FROM graph_edges WHERE build_id = ?1 AND stale = 0",
+                params![build_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(database_error)? as usize;
+        let diagnostics_json =
+            serde_json::to_string(&diagnostics).map_err(|error| CoreError::Database {
+                message: error.to_string(),
+            })?;
+        transaction
+            .execute(
+                "UPDATE graph_builds SET node_count = ?1, edge_count = ?2,
+                    skipped_links = ?3, ambiguous_links = ?4,
+                    diagnostics_json = ?5 WHERE build_id = ?6",
+                params![
+                    node_count as i64,
+                    edge_count as i64,
+                    skipped_links as i64,
+                    ambiguous_links as i64,
+                    diagnostics_json,
+                    build_id,
+                ],
+            )
+            .map_err(database_error)?;
+        transaction.commit().map_err(database_error)?;
+
+        Ok(GraphRebuildResponse {
+            build: GraphBuild {
+                build_id,
+                digest,
+                created_at,
+                node_count,
+                edge_count,
+                skipped_links,
+                ambiguous_links,
+                is_current: true,
+            },
+            diagnostics,
+        })
+    }
+
+    pub fn graph_traverse(
+        &self,
+        request: GraphTraversalRequest,
+    ) -> CoreResult<GraphTraversalResponse> {
+        request.validate()?;
+        let max_depth = request.max_depth.unwrap_or(1);
+        let max_nodes = request.max_nodes.unwrap_or(50);
+        let max_edges = request.max_edges.unwrap_or(100);
+        let mut connection = self.lock()?;
+        let transaction = connection.transaction().map_err(database_error)?;
+        let root_id = if let Some(source_id) = request.source_id {
+            source_id
+        } else {
+            let source = request.source.expect("validated source or source_id");
+            find_source_id(&transaction, &source)?.ok_or_else(|| CoreError::NotFound {
+                entity: "source".to_string(),
+                id: source.id(),
+            })?
+        };
+        let build = transaction
+            .query_row(
+                "SELECT build_id FROM graph_builds WHERE is_current = 1
+                 ORDER BY created_at DESC LIMIT 1",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(database_error)?
+            .ok_or_else(|| CoreError::NotFound {
+                entity: "graph build".to_string(),
+                id: "current".to_string(),
+            })?;
+
+        let mut nodes = Vec::new();
+        let mut edges = Vec::new();
+        let mut unavailable_sources = Vec::new();
+        let mut stale_sources = Vec::new();
+        let mut diagnostics = Vec::new();
+        let mut visited = HashSet::new();
+        let mut seen_edges = HashSet::new();
+        let mut frontier = vec![(root_id.clone(), 0usize)];
+        let mut truncated = false;
+        while let Some((current_id, depth)) = frontier.pop() {
+            if !visited.insert(current_id.clone()) {
+                continue;
+            }
+            let node = load_graph_node(&transaction, &build, &current_id)?;
+            let live = live_graph_snapshot(&transaction, &current_id)?;
+            let Some((live_hash, live_link_digest, live_access, live_deleted)) = live else {
+                stale_sources.push(node.source);
+                continue;
+            };
+            if !live_access.is_searchable() || live_deleted {
+                unavailable_sources.push(node.source);
+                continue;
+            }
+            if node.snapshot_hash != live_hash
+                || node.link_digest != live_link_digest
+                || node.access_status != live_access
+                || node.is_deleted != live_deleted
+            {
+                stale_sources.push(node.source);
+                continue;
+            }
+            if nodes.len() >= max_nodes {
+                truncated = true;
+                break;
+            }
+            let current_source = node.source.clone();
+            nodes.push(node);
+            if depth >= max_depth {
+                continue;
+            }
+            let mut statement = transaction
+                .prepare(
+                    "SELECT id, from_source_id, to_source_id, relation_type, provenance,
+                            evidence_location, confidence, source_hash, target_hash, stale
+                            , source_url, target_url
+                     FROM graph_edges WHERE build_id = ?1 AND stale = 0
+                       AND (from_source_id = ?2 OR to_source_id = ?2)
+                     ORDER BY id",
+                )
+                .map_err(database_error)?;
+            let rows = statement
+                .query_map(params![build, current_id], |row| {
+                    Ok(GraphEdgeRow {
+                        id: row.get(0)?,
+                        from_source_id: row.get(1)?,
+                        to_source_id: row.get(2)?,
+                        relation_type: row.get(3)?,
+                        provenance: row.get(4)?,
+                        evidence_location: row.get(5)?,
+                        confidence: row.get(6)?,
+                        source_hash: row.get(7)?,
+                        target_hash: row.get(8)?,
+                        stale: row.get::<_, i64>(9)? != 0,
+                        source_url: row.get(10)?,
+                        target_url: row.get(11)?,
+                    })
+                })
+                .map_err(database_error)?;
+            for row in rows {
+                let row = row.map_err(database_error)?;
+                if !seen_edges.insert(row.id.clone()) {
+                    continue;
+                }
+                if edges.len() >= max_edges {
+                    truncated = true;
+                    break;
+                }
+                let neighbor_id = if row.from_source_id == current_id {
+                    row.to_source_id.clone()
+                } else {
+                    row.from_source_id.clone()
+                };
+                let neighbor = load_graph_node(&transaction, &build, &neighbor_id)?;
+                let neighbor_live = live_graph_snapshot(&transaction, &neighbor_id)?;
+                let Some((neighbor_hash, neighbor_link_digest, neighbor_access, neighbor_deleted)) =
+                    neighbor_live
+                else {
+                    stale_sources.push(neighbor.source);
+                    continue;
+                };
+                if !neighbor_access.is_searchable() || neighbor_deleted {
+                    if !unavailable_sources
+                        .iter()
+                        .any(|source| source.id() == neighbor.source.id())
+                    {
+                        unavailable_sources.push(neighbor.source);
+                    }
+                    continue;
+                }
+                if neighbor.snapshot_hash != neighbor_hash
+                    || neighbor.link_digest != neighbor_link_digest
+                    || neighbor.access_status != neighbor_access
+                    || neighbor.is_deleted != neighbor_deleted
+                {
+                    stale_sources.push(neighbor.source);
+                    continue;
+                }
+                if !visited.contains(&neighbor_id)
+                    && !frontier
+                        .iter()
+                        .any(|(source_id, _)| source_id == &neighbor_id)
+                {
+                    if nodes.len() + frontier.len() >= max_nodes {
+                        truncated = true;
+                        break;
+                    }
+                    frontier.push((neighbor_id.clone(), depth + 1));
+                }
+                let neighbor_edge_hash = if row.from_source_id == current_id {
+                    row.target_hash.as_deref().unwrap_or_default()
+                } else {
+                    row.source_hash.as_str()
+                };
+                if neighbor_edge_hash != neighbor_hash {
+                    stale_sources.push(neighbor.source);
+                    continue;
+                }
+                let current_edge_hash = if row.from_source_id == current_id {
+                    row.source_hash.as_str()
+                } else {
+                    row.target_hash.as_deref().unwrap_or_default()
+                };
+                if current_edge_hash != live_hash {
+                    stale_sources.push(current_source.clone());
+                    continue;
+                }
+                let edge = load_graph_edge(&transaction, &build, row)?;
+                if edge.source_url != edge.from.url
+                    || edge.target_url.as_deref() != Some(edge.to.url.as_str())
+                {
+                    stale_sources.push(current_source.clone());
+                    stale_sources.push(neighbor.source.clone());
+                    continue;
+                }
+                edges.push(edge);
+            }
+            drop(statement);
+        }
+        stale_sources.sort_by_key(SourceRef::id);
+        stale_sources.dedup_by(|left, right| left.id() == right.id());
+        unavailable_sources.sort_by_key(SourceRef::id);
+        unavailable_sources.dedup_by(|left, right| left.id() == right.id());
+        if truncated {
+            diagnostics.push("graph traversal bounds reached".to_string());
+        }
+        transaction.commit().map_err(database_error)?;
+        Ok(GraphTraversalResponse {
+            build_id: build,
+            nodes,
+            edges,
+            unavailable_sources,
+            stale_sources,
+            diagnostics,
+            truncated,
+        })
+    }
+
     pub fn upsert_memory(&self, input: MemoryUpsertInput) -> CoreResult<MemoryMutation> {
         validate_memory_input(&input)?;
         let digest = request_digest(&input)?;
@@ -1104,6 +1767,9 @@ impl Database {
         transaction
             .execute("DELETE FROM snapshots", [])
             .map_err(database_error)?;
+        transaction
+            .execute("DELETE FROM graph_builds", [])
+            .map_err(database_error)?;
         transaction.commit().map_err(database_error)?;
         Ok(CacheClearResult {
             snapshots_removed,
@@ -1175,7 +1841,7 @@ impl Database {
                 message: "backup and active database must be different paths".to_string(),
             });
         }
-        let schema_version = validate_database_file(&backup)?;
+        let _backup_schema_version = validate_database_file(&backup)?;
         let temporary = target.with_file_name(format!(
             ".{}.restore-{}",
             target
@@ -1187,10 +1853,20 @@ impl Database {
         std::fs::copy(&backup, &temporary).map_err(|error| CoreError::Database {
             message: format!("could not stage restore: {error}"),
         })?;
-        if let Err(error) = validate_database_file(&temporary) {
-            let _ = std::fs::remove_file(&temporary);
-            return Err(error);
-        }
+        let staged_schema_version = match open_database_connection(&temporary) {
+            Ok(connection) => {
+                drop(connection);
+                validate_database_file(&temporary)
+            }
+            Err(error) => Err(error),
+        };
+        let schema_version = match staged_schema_version {
+            Ok(version) => version,
+            Err(error) => {
+                let _ = std::fs::remove_file(&temporary);
+                return Err(error);
+            }
+        };
         let old_path = target.with_file_name(format!(
             ".{}.before-restore-{}",
             target
@@ -1396,7 +2072,8 @@ fn validate_database_file(path: &Path) -> CoreResult<i64> {
             id: path.display().to_string(),
         });
     }
-    let connection = open_database_connection(path)?;
+    let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .map_err(database_error)?;
     let integrity: String = connection
         .query_row("PRAGMA integrity_check", [], |row| row.get(0))
         .map_err(database_error)?;
@@ -1418,6 +2095,249 @@ fn database_error(error: rusqlite::Error) -> CoreError {
     CoreError::Database {
         message: error.to_string(),
     }
+}
+
+#[derive(Debug)]
+struct GraphSnapshotRow {
+    source_id: String,
+    source: SourceRef,
+    title: String,
+    body: String,
+    content_hash: String,
+    access_status: String,
+    is_deleted: bool,
+    links: Vec<SourceLink>,
+}
+
+#[derive(Debug)]
+struct GraphEdgeRow {
+    id: String,
+    from_source_id: String,
+    to_source_id: String,
+    relation_type: String,
+    provenance: String,
+    evidence_location: Option<String>,
+    confidence: Option<f64>,
+    source_url: String,
+    target_url: Option<String>,
+    source_hash: String,
+    target_hash: Option<String>,
+    stale: bool,
+}
+
+fn graph_link_digest(links: &[SourceLink]) -> String {
+    let mut values = links
+        .iter()
+        .map(|link| format!("{}\0{}", link.kind.trim(), link.target.trim()))
+        .collect::<Vec<_>>();
+    values.sort();
+    sha256_hex(values.join("\n").as_bytes())
+}
+
+fn graph_edge_id(
+    build_id: &str,
+    from_source_id: &str,
+    to_source_id: &str,
+    relation_type: &str,
+    provenance: &str,
+) -> String {
+    let canonical =
+        format!("{build_id}\0{from_source_id}\0{to_source_id}\0{relation_type}\0{provenance}");
+    format!("gedge_{}", &sha256_hex(canonical.as_bytes())[..24])
+}
+
+fn normalize_path(value: &str) -> String {
+    let value = value.trim().replace('\\', "/");
+    let value = value.strip_prefix("./").unwrap_or(&value);
+    let value = value.strip_prefix('/').unwrap_or(value);
+    if value.ends_with(".md") {
+        value.to_string()
+    } else {
+        format!("{value}.md")
+    }
+}
+
+fn normalize_wikilink_target(value: &str) -> String {
+    let mut value = value.trim();
+    if let Some((target, _)) = value.split_once('|') {
+        value = target.trim();
+    }
+    if let Some((target, _)) = value.split_once('#') {
+        value = target.trim();
+    }
+    normalize_path(value)
+}
+
+fn extract_graph_links(body: &str, provided: &[SourceLink]) -> Vec<SourceLink> {
+    let mut links = provided.to_vec();
+    let bytes = body.as_bytes();
+    let mut index = 0usize;
+    while index + 3 < bytes.len() {
+        if bytes[index] == b'[' && bytes[index + 1] == b'[' {
+            if let Some(end) = body[index + 2..].find("]]") {
+                let target = body[index + 2..index + 2 + end]
+                    .split_once('|')
+                    .map(|(target, _)| target)
+                    .unwrap_or(&body[index + 2..index + 2 + end])
+                    .split_once('#')
+                    .map(|(target, _)| target)
+                    .unwrap_or_else(|| {
+                        body[index + 2..index + 2 + end]
+                            .split_once('|')
+                            .map(|(target, _)| target)
+                            .unwrap_or(&body[index + 2..index + 2 + end])
+                    })
+                    .trim();
+                if !target.is_empty() {
+                    links.push(SourceLink {
+                        target: target.to_string(),
+                        kind: "wikilink".to_string(),
+                    });
+                }
+                index += end + 4;
+                continue;
+            }
+        }
+        index += 1;
+    }
+    for raw in body.split_whitespace() {
+        let target = raw.trim_matches(|character: char| {
+            matches!(
+                character,
+                '(' | ')' | '[' | ']' | '{' | '}' | '<' | '>' | ',' | ';' | '.'
+            )
+        });
+        if target.starts_with("http://")
+            || target.starts_with("https://")
+            || target.starts_with("obsidian://")
+        {
+            links.push(SourceLink {
+                target: target.to_string(),
+                kind: "url".to_string(),
+            });
+        }
+    }
+    links.sort_by(|left, right| {
+        left.kind
+            .cmp(&right.kind)
+            .then_with(|| left.target.cmp(&right.target))
+    });
+    links.dedup_by(|left, right| left.kind == right.kind && left.target == right.target);
+    links
+}
+
+fn load_graph_node(
+    transaction: &Transaction<'_>,
+    build_id: &str,
+    source_id: &str,
+) -> CoreResult<GraphNode> {
+    transaction
+        .query_row(
+            "SELECT n.title, n.snapshot_hash, n.link_digest, n.access_status,
+                    n.is_deleted, s.provider, s.account_id, s.external_id, s.url, s.kind
+             FROM graph_nodes n JOIN sources s ON s.id = n.source_id
+             WHERE n.build_id = ?1 AND n.source_id = ?2",
+            params![build_id, source_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, i64>(4)?,
+                    SourceRef {
+                        provider: row.get(5)?,
+                        account_id: row.get(6)?,
+                        external_id: row.get(7)?,
+                        url: row.get(8)?,
+                        kind: row.get(9)?,
+                    },
+                ))
+            },
+        )
+        .optional()
+        .map_err(database_error)?
+        .ok_or_else(|| CoreError::NotFound {
+            entity: "graph node".to_string(),
+            id: source_id.to_string(),
+        })
+        .and_then(
+            |(title, snapshot_hash, link_digest, access_status, is_deleted, source)| {
+                Ok(GraphNode {
+                    id: source_id.to_string(),
+                    source,
+                    title,
+                    snapshot_hash,
+                    link_digest,
+                    build_id: build_id.to_string(),
+                    access_status: AccessStatus::from_str(&access_status)?,
+                    is_deleted: is_deleted != 0,
+                })
+            },
+        )
+}
+
+fn load_graph_edge(
+    transaction: &Transaction<'_>,
+    build_id: &str,
+    row: GraphEdgeRow,
+) -> CoreResult<GraphEdge> {
+    let from = load_source(transaction, &row.from_source_id)?;
+    let to = load_source(transaction, &row.to_source_id)?;
+    Ok(GraphEdge {
+        id: row.id,
+        from_source_id: row.from_source_id,
+        to_source_id: row.to_source_id,
+        from,
+        to,
+        relation_type: row.relation_type,
+        provenance: GraphProvenance::from_str(&row.provenance)?,
+        evidence_location: row.evidence_location,
+        confidence: row.confidence,
+        source_url: row.source_url,
+        target_url: row.target_url,
+        source_hash: row.source_hash,
+        target_hash: row.target_hash,
+        build_id: build_id.to_string(),
+        stale: row.stale,
+    })
+}
+
+fn live_graph_snapshot(
+    transaction: &Transaction<'_>,
+    source_id: &str,
+) -> CoreResult<Option<(String, String, AccessStatus, bool)>> {
+    transaction
+        .query_row(
+            "SELECT content_hash, body, links_json, access_status, is_deleted
+             FROM snapshots WHERE source_id = ?1",
+            params![source_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, i64>(4)? != 0,
+                ))
+            },
+        )
+        .optional()
+        .map_err(database_error)?
+        .map(|(hash, body, links_json, access_status, deleted)| {
+            let links = serde_json::from_str::<Vec<SourceLink>>(&links_json).map_err(|error| {
+                CoreError::Database {
+                    message: error.to_string(),
+                }
+            })?;
+            Ok((
+                hash,
+                graph_link_digest(&extract_graph_links(&body, &links)),
+                AccessStatus::from_str(&access_status)?,
+                deleted,
+            ))
+        })
+        .transpose()
 }
 
 fn find_source_id(transaction: &Transaction<'_>, source: &SourceRef) -> CoreResult<Option<String>> {

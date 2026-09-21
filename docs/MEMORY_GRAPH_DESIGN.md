@@ -43,8 +43,10 @@ rebuild를 위해 남길 수 있지만 query/traversal 응답에는 포함하지
   모두 만족해야 한다.
 - `inferred`: 현재 구현에서는 모델 호출을 하지 않으므로 저장하지 않는다.
 
-target이 외부 URL이거나 동일 path가 여러 source에 매칭되면 edge를 만들지
-않고 ambiguity를 build diagnostic에 기록한다. 링크가 있는 snapshot도
+wikilink target이 다른 namespace이거나 동일 path가 여러 source에 매칭되면
+edge를 만들지 않고 ambiguity를 build diagnostic에 기록한다. URL은 provider가
+달라도 canonical URL이 현재 source 하나와 정확히 일치할 때 연결할 수 있다.
+동일 URL이 여러 source에 매칭되면 edge를 만들지 않는다. 링크가 있는 snapshot도
 본문·title만 같을 수 있으므로 node freshness는 `content_hash`와 정렬된
 link target/kind payload를 함께 해시한다. build ID는 scope와 digest를 포함한
 결정적 값이다.
@@ -129,4 +131,3 @@ Keychain, iCloud hydration을 대신하지 않는다.
 | context | lexical+memory+graph composition, unavailable/freshness, old six IPC methods |
 | 교환 | deterministic export, safe import under root, no auto promotion/external write |
 | 빌드 | `npm run build`, `cargo test --manifest-path src-tauri/Cargo.toml`, `cargo check --manifest-path src-tauri/Cargo.toml`, `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`, `git diff --check` |
-

@@ -124,6 +124,9 @@ transaction에서 적용한다.
 - v2: `memory_revisions`, `idempotency_records`
 - v3: snapshot metadata/explicit link JSON
 - v4: `ui_memories` presentation metadata linked to Core Memory
+- v5: derived `graph_builds`, `graph_nodes`, and `graph_edges` with provenance,
+  snapshot/link digests, stale markers, and bounded rebuild metadata
+- v6: graph edge source/target URLs for detecting URL retargets before rebuild
 
 마이그레이션 SQL, version 기록, commit이 하나의 transaction에 들어가므로
 실패하면 해당 version과 새 테이블이 함께 rollback된다. 외래 키를 켜며,

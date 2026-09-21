@@ -16,7 +16,9 @@ user-reviewable in-app memories.
   M1 adds an explicitly selected, read-only Obsidian vault adapter, and M2
   adds a selected-scope GitHub read-only adapter with credential-store
   boundaries, and M4 adds an authenticated local Core IPC owner plus CLI/MCP
-  transports.
+  transports. G1 adds a separately rebuilt SQLite document graph with
+  provenance, snapshot/link freshness digests, and bounded traversal; it does
+  not alter canonical user relations.
 
 The first UI slice mirrors the planned focus: work contexts on the left,
 memory and activity in the centre, and source evidence on the right. Work
@@ -56,7 +58,8 @@ localStorage data unless the user chooses import; browser fallback saves are
 labelled as demos. External writes, remote webhook infrastructure, real account
 smoke, packaged distribution, and native app verification remain staged
 boundaries. CLI/MCP use the authenticated Core owner and never open SQLite.
-Backups, restore integrity checks, cache-only deletion, accessibility behavior,
+Backups, restore integrity checks, cache-only deletion (including derived graph
+builds), accessibility behavior,
 and a local arm64 package helper are implemented; release signing and public
 Cask publication are intentionally not performed.
 See

@@ -6,7 +6,7 @@
 ## M0 — 완료
 
 - Rust `Core` 공통 모델/API와 구조화 `CoreError` 추가
-- SQLite transaction 마이그레이션(v1–v4), 외래 키, bundled FTS5 snapshot 검색
+- SQLite transaction 마이그레이션(v1–v6), 외래 키, bundled FTS5 snapshot 검색
 - source identity 중복 제거, provider/account namespace, 기간·종류 필터
 - 접근 상태와 freshness, 마지막 정상 snapshot을 보존하는 실패 기록, 연결별 SyncState
 - 메모 근거·저장 이유·작성 주체·claim type 검증
@@ -14,6 +14,28 @@
 - 읽기 전용 `ReadOnlyConnector` 계약과 Obsidian/GitHub fixture
 - 임시/in-memory DB 회귀 테스트와 마이그레이션 rollback 테스트
 - [CORE_CONTRACT.md](./CORE_CONTRACT.md)에 저장·IPC 경계 고정
+
+## G1 — 구현 완료 · native/live 검증 대기 (파생 문서 그래프)
+
+- migration v5/v6으로 canonical `relations`와 분리된 `graph_builds`,
+  `graph_nodes`, `graph_edges` 투영 계층 추가
+- snapshot의 정규 URL·Obsidian wikilink를 provider/account/path namespace와
+  exact canonical URL 규칙으로 결정적으로 해석; title만으로 연결하거나
+  모호한 target을 연결하지 않음
+- extracted/explicit provenance, evidence metadata, snapshot content/link
+  digest, source/target URL, deterministic build ID와 rebuild diagnostics 보존
+- 접근 철회·삭제·stale hash/link/URL edge를 traversal에서 제외하고,
+  `max_depth`/`max_nodes`/`max_edges` bounded traversal과 inbound edge 중복
+  제거를 제공
+- `cache_clear`가 snapshot/FTS와 파생 graph build를 함께 지우며 source와
+  canonical memory/evidence는 보존
+- graph review integration 5개와 v4 backup을 staged copy에서만 최신 schema로
+  migrate하는 restore regression을 통과
+
+G1은 완전한 Tree-sitter/코드 심볼 parser, 모델 기반 inferred edge, native
+Tauri/WebGL 그래프 화면을 포함하지 않는다. fixture/in-memory에서 확인한
+freshness와 접근 상태는 실제 provider, iCloud/FSEvents, native window 검증을
+대신하지 않는다.
 
 ## M1 — 구현 완료 · native 검증 대기 (선택된 Obsidian vault)
 
@@ -119,7 +141,7 @@ Keychain/실계정 provider와 함께 실행하는 native smoke는 아직 검증
 | 명령 | 결과 |
 | --- | --- |
 | `npm run build` | 통과: `tsc` + Vite production build |
-| `cargo test --manifest-path src-tauri/Cargo.toml` | 통과: Rust unit 11개, M0 integration 6개, M1 integration 1개, M2 integration 2개, M3 integration 3개, M4 integration 1개, M5 storage 3개, M5 benchmark 1개 |
+| `cargo test --manifest-path src-tauri/Cargo.toml` | 통과: Rust unit 11개, graph integration 5개, M0 integration 6개, M1 integration 1개, M2 integration 2개, M3 integration 3개, M4 integration 1개, M5 storage 4개, M5 benchmark 1개 |
 | `cargo check --manifest-path src-tauri/Cargo.toml` | 통과 |
 | `git diff --check` | 통과 |
 | `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` | 통과 |

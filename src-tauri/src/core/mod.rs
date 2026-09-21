@@ -232,6 +232,28 @@ impl Core {
         self.database.snapshot(source)
     }
 
+    pub fn rebuild_graph(&self, request: GraphRebuildRequest) -> CoreResult<GraphRebuildResponse> {
+        self.database.rebuild_graph(request)
+    }
+
+    pub fn graph_rebuild(&self, request: GraphRebuildRequest) -> CoreResult<GraphRebuildResponse> {
+        self.rebuild_graph(request)
+    }
+
+    pub fn graph_traverse(
+        &self,
+        request: GraphTraversalRequest,
+    ) -> CoreResult<GraphTraversalResponse> {
+        self.database.graph_traverse(request)
+    }
+
+    pub fn graph_query(
+        &self,
+        request: GraphTraversalRequest,
+    ) -> CoreResult<GraphTraversalResponse> {
+        self.graph_traverse(request)
+    }
+
     pub fn upsert_memory(&self, input: MemoryUpsertInput) -> CoreResult<MemoryMutation> {
         self.database.upsert_memory(input)
     }

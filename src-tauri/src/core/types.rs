@@ -169,6 +169,177 @@ pub struct SourceLink {
     pub kind: String,
 }
 
+/// Provenance for a derived graph edge. `explicit` mirrors the user's
+/// canonical relation table; `extracted` comes from a snapshot link. The
+/// current local implementation never invents `inferred` edges, but the
+/// value is part of the versioned graph contract for future adapters.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GraphProvenance {
+    Explicit,
+    Extracted,
+    Inferred,
+}
+
+impl GraphProvenance {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Explicit => "explicit",
+            Self::Extracted => "extracted",
+            Self::Inferred => "inferred",
+        }
+    }
+
+    pub fn from_str(value: &str) -> CoreResult<Self> {
+        match value {
+            "explicit" => Ok(Self::Explicit),
+            "extracted" => Ok(Self::Extracted),
+            "inferred" => Ok(Self::Inferred),
+            other => Err(CoreError::Database {
+                message: format!("unknown graph provenance '{other}'"),
+            }),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GraphNode {
+    pub id: String,
+    pub source: SourceRef,
+    pub title: String,
+    pub snapshot_hash: String,
+    pub link_digest: String,
+    pub build_id: String,
+    pub access_status: AccessStatus,
+    pub is_deleted: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GraphEdge {
+    pub id: String,
+    pub from_source_id: String,
+    pub to_source_id: String,
+    pub from: SourceRef,
+    pub to: SourceRef,
+    pub relation_type: String,
+    pub provenance: GraphProvenance,
+    pub evidence_location: Option<String>,
+    pub confidence: Option<f64>,
+    pub source_url: String,
+    pub target_url: Option<String>,
+    pub source_hash: String,
+    pub target_hash: Option<String>,
+    pub build_id: String,
+    pub stale: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GraphBuild {
+    pub build_id: String,
+    pub digest: String,
+    pub created_at: String,
+    pub node_count: usize,
+    pub edge_count: usize,
+    pub skipped_links: usize,
+    pub ambiguous_links: usize,
+    pub is_current: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct GraphRebuildRequest {
+    #[serde(default)]
+    pub provider: Option<String>,
+    #[serde(default)]
+    pub account_id: Option<String>,
+}
+
+impl GraphRebuildRequest {
+    pub fn validate(&self) -> CoreResult<()> {
+        if self
+            .provider
+            .as_deref()
+            .is_some_and(|value| value.trim().is_empty())
+        {
+            return Err(CoreError::InvalidInput {
+                field: "provider".to_string(),
+                message: "must not be empty when supplied".to_string(),
+            });
+        }
+        if self
+            .account_id
+            .as_deref()
+            .is_some_and(|value| value.trim().is_empty())
+        {
+            return Err(CoreError::InvalidInput {
+                field: "account_id".to_string(),
+                message: "must not be empty when supplied".to_string(),
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GraphRebuildResponse {
+    pub build: GraphBuild,
+    pub diagnostics: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct GraphTraversalRequest {
+    #[serde(default)]
+    pub source_id: Option<String>,
+    #[serde(default)]
+    pub source: Option<SourceRef>,
+    #[serde(default)]
+    pub max_depth: Option<usize>,
+    #[serde(default)]
+    pub max_nodes: Option<usize>,
+    #[serde(default)]
+    pub max_edges: Option<usize>,
+}
+
+impl GraphTraversalRequest {
+    pub fn validate(&self) -> CoreResult<()> {
+        if self.source_id.is_none() && self.source.is_none() {
+            return Err(CoreError::InvalidInput {
+                field: "source_id".to_string(),
+                message: "one of source_id or source is required".to_string(),
+            });
+        }
+        for (field, value, maximum) in [
+            ("max_depth", self.max_depth, 8),
+            ("max_nodes", self.max_nodes, 200),
+            ("max_edges", self.max_edges, 400),
+        ] {
+            if value == Some(0) {
+                return Err(CoreError::InvalidInput {
+                    field: field.to_string(),
+                    message: "must be greater than zero".to_string(),
+                });
+            }
+            if value.is_some_and(|value| value > maximum) {
+                return Err(CoreError::InvalidInput {
+                    field: field.to_string(),
+                    message: format!("must not exceed {maximum}"),
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GraphTraversalResponse {
+    pub build_id: String,
+    pub nodes: Vec<GraphNode>,
+    pub edges: Vec<GraphEdge>,
+    pub unavailable_sources: Vec<SourceRef>,
+    pub stale_sources: Vec<SourceRef>,
+    pub diagnostics: Vec<String>,
+    pub truncated: bool,
+}
+
 impl Snapshot {
     pub fn new(
         source: SourceRef,
