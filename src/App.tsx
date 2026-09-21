@@ -1,13 +1,21 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Component, lazy, Suspense, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { activationReducer, createActivationState, stageLabel, stageShortLabel } from "./graph";
+import type { ActivationState } from "./graph";
+import { createGraphModel, sourceGraphId, noteGraphId, graphNodeKindLabel, graphLinkKindLabel } from "./graph-model";
+import type { GraphNode, GraphLink, GraphSelection } from "./graph-model";
 import "./App.css";
 import MemoryGraphPanel from "./MemoryGraphPanel";
 
-type Page = "work" | "home" | "notes" | "activity" | "search" | "connections" | "settings";
+const GraphCanvas = lazy(() => import("./GraphCanvas"));
+
+type Page = "work" | "home" | "notes" | "activity" | "graph" | "search" | "connections" | "settings";
 type WorkTab = "all" | "candidate" | "sources" | "activity";
 type NoteKind = "결정" | "다음 행동" | "미해결 질문" | "선호" | "후보";
 type SettingCategory = "일반" | "모양" | "플러그인" | "에이전트 연결" | "메모와 데이터" | "메모리와 그래프" | "동기화" | "업데이트와 진단";
+type GraphMode = "3d" | "list";
+type GraphKindFilter = "all" | "source" | "memory";
 
 type CoreStatus = {
   product: string;
@@ -24,7 +32,7 @@ type NoteRevision = {
   reason: string;
 };
 
-type Note = {
+export type Note = {
   id: number;
   work: number;
   kind: NoteKind;
@@ -41,7 +49,7 @@ type Note = {
   previous?: NoteRevision;
 };
 
-type CoreSourceRef = {
+export type CoreSourceRef = {
   provider: string;
   account_id: string;
   external_id: string;
@@ -74,7 +82,7 @@ type NativeUiMemoryMutation = {
   action: string;
 };
 
-type Source = {
+export type Source = {
   id: number;
   provider: "GitHub" | "Obsidian";
   title: string;
@@ -115,6 +123,9 @@ type DetailState =
   | { type: "history"; note: Note }
   | { type: "scope"; source: Source }
   | null;
+
+type GraphCanvasBoundaryProps = { children: ReactNode; fallback: ReactNode };
+type GraphCanvasBoundaryState = { hasError: boolean };
 
 const STORAGE_NOTES = "aidebook-notes-v1";
 const STORAGE_ACTIVITIES = "aidebook-activities-v1";
@@ -264,12 +275,25 @@ function clampInspectorWidth(value: number) {
   return Math.min(440, Math.max(280, value));
 }
 
-function Icon({ name }: { name: "brand" | "work" | "notes" | "activity" | "panel-left" | "panel-right" | "search" | "settings" | "link" | "close" }) {
+class GraphCanvasBoundary extends Component<GraphCanvasBoundaryProps, GraphCanvasBoundaryState> {
+  state: GraphCanvasBoundaryState = { hasError: false };
+
+  static getDerivedStateFromError(): GraphCanvasBoundaryState {
+    return { hasError: true };
+  }
+
+  render() {
+    return this.state.hasError ? this.props.fallback : this.props.children;
+  }
+}
+
+function Icon({ name }: { name: "brand" | "work" | "notes" | "activity" | "graph" | "panel-left" | "panel-right" | "search" | "settings" | "link" | "close" }) {
   const paths = {
     brand: <><path d="M5 3h17v18H5zM9 3v18" /><path d="M13 8h5M13 12h5M13 16h3" /></>,
     work: <><rect x="4" y="4" width="16" height="16" rx="3" /><path d="M4 10h16M10 10v10" /></>,
     notes: <><path d="M6 3h12v18H6zM9 8h6M9 12h6M9 16h4" /></>,
     activity: <><circle cx="12" cy="12" r="8" /><path d="M12 7v5l3 2" /></>,
+    graph: <><circle cx="6" cy="7" r="2" /><circle cx="18" cy="5" r="2" /><circle cx="16" cy="18" r="2" /><path d="m7.8 6.4 8.4-1M7.4 8.5l7.3 8M17.5 6.8l-1 9.2" /></>,
     "panel-left": <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16" /></>,
     "panel-right": <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M15 4v16" /></>,
     search: <><circle cx="10.5" cy="10.5" r="5.5" /><path d="m15 15 4 4" /></>,
@@ -306,6 +330,11 @@ function App() {
   const [sidebarMobileOpen, setSidebarMobileOpen] = useState(false);
   const [inspectorHidden, setInspectorHidden] = useState(() => readStorage(STORAGE_SESSION, { inspectorHidden: false }).inspectorHidden);
   const [inspectorWidth, setInspectorWidth] = useState(() => clampInspectorWidth(readStorage(STORAGE_SESSION, { inspectorWidth: DEFAULT_INSPECTOR_WIDTH }).inspectorWidth));
+  const [graphMode, setGraphMode] = useState<GraphMode>("3d");
+  const [graphKindFilter, setGraphKindFilter] = useState<GraphKindFilter>("all");
+  const [graphActiveOnly, setGraphActiveOnly] = useState(false);
+  const [graphSelection, setGraphSelection] = useState<GraphSelection>(null);
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
   const editorTitleRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -333,6 +362,14 @@ function App() {
       }));
       setNotes((current) => [...loaded, ...current.filter((note) => !note.nativeId)]);
     }).catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const update = () => setPrefersReducedMotion(media.matches);
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
   }, []);
 
   useEffect(() => { localStorage.setItem(STORAGE_NOTES, JSON.stringify(notes)); }, [notes]);
@@ -376,6 +413,25 @@ function App() {
   const activeWorkNotes = useMemo(() => notes.filter((note) => note.work === work && !note.retracted), [notes, work]);
   const noteCount = activeWorkNotes.length;
   const candidateCount = activeWorkNotes.filter((note) => note.kind === "후보").length;
+  const graphModel = useMemo(() => createGraphModel(work, activeWorkNotes, sources), [work, activeWorkNotes]);
+  const [activation, dispatchActivation] = useReducer(activationReducer, graphModel.demoEvents, createActivationState);
+  const graphMotionReduced = settings.reduceMotion || prefersReducedMotion;
+
+  useEffect(() => {
+    dispatchActivation({ type: "load", events: graphModel.demoEvents });
+    setGraphSelection(null);
+  }, [graphModel.demoEvents]);
+
+  useEffect(() => {
+    if (page === "graph") return;
+    if (activation.status !== "idle") dispatchActivation({ type: "reset" });
+  }, [page, activation.status]);
+
+  useEffect(() => {
+    if (page !== "graph" || activation.status !== "playing") return;
+    const timer = window.setTimeout(() => dispatchActivation({ type: "step" }), graphMotionReduced ? 360 : 820);
+    return () => window.clearTimeout(timer);
+  }, [page, activation.status, activation.cursor, graphMotionReduced]);
 
   function pushActivity(title: string, body: string) {
     setActivities((current) => [{ id: `${Date.now()}-${title}`, time: nowLabel(), title, body }, ...current].slice(0, 30));
@@ -780,11 +836,12 @@ function App() {
 
   function pageTitle() {
     if (page === "work") return `작업 묶음　/　${works[work]}`;
-    return { home: "개인 작업 공간　/　최근 맥락", notes: "개인 작업 공간　/　모든 메모", activity: "개인 작업 공간　/　활동 기록", search: "전체 검색", connections: "설정　/　연결 상태", settings: `설정　/　${setting}` }[page];
+    return { home: "개인 작업 공간　/　최근 맥락", notes: "개인 작업 공간　/　모든 메모", activity: "개인 작업 공간　/　활동 기록", graph: "탐색　/　지식 그래프", search: "전체 검색", connections: "설정　/　연결 상태", settings: `설정　/　${setting}` }[page];
   }
 
   function renderPage() {
     if (page === "work") return <WorkPage />;
+    if (page === "graph") return renderGraphPage();
     if (page === "search") return <SearchPage />;
     if (page === "connections") return <ConnectionsPage />;
     if (page === "settings") return <SettingsPage />;
@@ -795,6 +852,42 @@ function App() {
   function WorkPage() {
     const list = activeWorkNotes.filter((note) => tab === "all" || (tab === "candidate" && note.kind === "후보"));
     return <div className="workspace"><div className="reading"><section className="section intro-section"><div className="container"><p className="eyebrow">작업 노트 / {String(work + 1).padStart(2, "0")}</p><div className="row-between intro-heading"><div><h1>{works[work]}</h1><p className="muted">{work === 0 ? "흩어진 진행 상황과 결정을 한곳에서 이어갑니다." : "다음 작업에서도 잊지 않을 결정과 질문을 모읍니다."}</p></div><button className="btn btn-primary" type="button" onClick={() => openEditor()}>＋ 메모 쓰기</button></div><div className="tag-row"><span className="tag">GitHub</span><span className="tag">Obsidian</span><span className="small muted">최근 기록 9월 18일</span></div></div></section><div className="tabs" role="tablist" aria-label="작업 내용">{([["all", "메모", noteCount], ["candidate", "검토할 후보", candidateCount], ["sources", "연결 자료", 2], ["activity", "활동", activities.length]] as const).map(([value, label, count]) => <button key={value} className={`tab ${tab === value ? "active" : ""}`} type="button" role="tab" aria-selected={tab === value} onClick={() => setTab(value)}>{label}<span>{count}</span></button>)}</div>{work === 0 && <div className="notice" role="status"><strong>일부 근거를 다시 확인해야 합니다</strong><br />GitHub 자료의 마지막 확인은 09:12입니다. <button type="button" onClick={() => refreshSource(sources[0])}>{refreshingSource === 0 ? "확인 중…" : "최신 상태 확인"}</button>{refreshMessage && <span className="status-inline">{refreshMessage}</span>}</div>}<section className="section memory-section"><div className="container">{tab === "sources" ? <SourceList onOpen={(source) => setDetail({ type: "source", source })} /> : tab === "activity" ? <ActivityList items={activities} /> : <><div className="subhead"><span>{tab === "candidate" ? "아직 확정하지 않은 내용" : "기억해 둘 내용"}</span><span className="muted small">최근 기록 순</span></div>{list.map((note) => <NoteCard key={note.id} note={note} selected={note.id === selected} onClick={() => selectNote(note.id)} />)}{list.length === 0 && <div className="empty">검토할 후보가 없습니다.</div>}</>}</div></section>{tab === "all" && <section className="section activity-section"><div className="container"><div className="subhead">최근 활동</div><ActivityList items={activities.slice(0, 3)} compact /></div></section>}<div className="footer-line">로컬 작업 공간 · 메모 변경은 이 기기에만 저장됩니다.</div></div><div className="splitter" role="separator" tabIndex={0} aria-label="근거 패널 너비 조절" aria-orientation="vertical" aria-valuemin={280} aria-valuemax={440} aria-valuenow={inspectorWidth} onPointerDown={handleSplitterPointerDown} onKeyDown={handleSplitterKeyDown} />{!inspectorHidden && <EvidencePanel />}</div>;
+  }
+
+  function selectGraphNode(nodeId: string) {
+    setInspectorHidden(false);
+    setGraphSelection({ type: "node", nodeId });
+    const node = graphModel.nodes.find((item) => item.id === nodeId);
+    if (node?.kind === "memory" && node.noteId !== undefined) setSelected(node.noteId);
+  }
+
+  function renderGraphPage() {
+    const activeNodeSet = new Set(activation.activeNodeIds);
+    const activeEdgeSet = new Set(activation.activeEdgeIds);
+    const selectedGraphNode = graphSelection?.type === "node" ? graphModel.nodes.find((node) => node.id === graphSelection.nodeId) : undefined;
+    const selectedGraphLink = graphSelection?.type === "edge" ? graphModel.links.find((link) => link.id === graphSelection.edgeId) : undefined;
+    const filteredNodes = graphModel.nodes.filter((node) => {
+      const matchesKind = graphKindFilter === "all" || node.kind === graphKindFilter;
+      const matchesActivity = !graphActiveOnly || activeNodeSet.has(node.id);
+      return matchesKind && matchesActivity;
+    });
+    const visibleNodeIds = new Set(filteredNodes.map((node) => node.id));
+    const filteredLinks = graphModel.links.filter((link) => {
+      const matchesNodes = visibleNodeIds.has(link.sourceId) && visibleNodeIds.has(link.targetId);
+      return matchesNodes && (!graphActiveOnly || activeEdgeSet.has(link.id));
+    });
+    const stageProgress = activation.cursor < 0 ? 0 : activation.cursor + 1;
+    const activationStatus = activation.status === "idle" ? "정지" : activation.status === "playing" ? `데모 재생 중 · ${stageProgress}/${activation.events.length}` : "데모 완료";
+
+    return <div className="workspace graph-workspace"><div className="reading graph-reading"><section className="section intro-section"><div className="container"><p className="eyebrow">탐색 그래프 / {String(work + 1).padStart(2, "0")}</p><div className="row-between intro-heading"><div><h1>근거의 별자리</h1><p className="muted">현재 작업의 자료·메모·evidence 연결을 안정된 공간에서 탐색합니다.</p></div><span className="graph-status-badge" data-state={activation.status}>{activationStatus}</span></div><div className="tag-row"><span className="tag">현재 작업 · {works[work]}</span><span className="tag">실제 AI 추적 없음</span><span className="small muted">선택한 데모 재생만 활성화 상태를 바꿉니다.</span></div></div></section><section className="graph-toolbar" aria-label="그래프 보기 설정"><div className="graph-view-toggle" role="group" aria-label="그래프 보기"><button className={`btn ${graphMode === "3d" ? "btn-primary" : "btn-secondary"}`} type="button" aria-pressed={graphMode === "3d"} onClick={() => setGraphMode("3d")}>3D 탐색</button><button className={`btn ${graphMode === "list" ? "btn-primary" : "btn-secondary"}`} type="button" aria-pressed={graphMode === "list"} onClick={() => setGraphMode("list")}>목록 대안</button></div><label className="graph-filter">자료 유형<select value={graphKindFilter} onChange={(event) => setGraphKindFilter(event.target.value as GraphKindFilter)}><option value="all">모두</option><option value="source">자료</option><option value="memory">메모</option></select></label><label className="graph-check"><input type="checkbox" checked={graphActiveOnly} onChange={(event) => setGraphActiveOnly(event.target.checked)} />활성 자료만</label><div className="graph-toolbar-actions"><button className="btn btn-primary" type="button" disabled={activation.status === "playing" || activation.events.length === 0} onClick={() => dispatchActivation({ type: "start" })}>{activation.status === "playing" ? "재생 중…" : "데모 재생"}</button><button className="btn btn-ghost" type="button" disabled={activation.status === "idle"} onClick={() => dispatchActivation({ type: "reset" })}>리셋</button></div></section><div className="graph-notice" role="status"><strong>데모 경계</strong><span>이 재생은 결정적 fixture 이벤트입니다. 검색 결과 포함, 반환 응답 생성, 답변 인용을 구분해 보여주며 실제 모델 호출·프롬프트 포함·에이전트 수신을 증명하지 않습니다.</span></div><ol className="graph-timeline" aria-label="활성화 단계">{activation.events.map((event, index) => <li key={event.eventId} className={`${index <= activation.cursor ? "complete" : ""} ${index === activation.cursor ? "current" : ""}`}><span className="graph-timeline-marker">{index + 1}</span><span><strong>{stageLabel(event.stage)}</strong><small>{event.observer === "demo_fixture" ? "fixture · 실제 관측 아님" : event.observer}</small></span></li>)}</ol><div className="graph-output">{graphMode === "3d" ? <GraphCanvasBoundary key={graphModel.requestId} fallback={<GraphFallback onList={() => setGraphMode("list")} />}><Suspense fallback={<div className="graph-fallback" role="status">3D 그래프를 불러오는 중…</div>}><GraphCanvas model={graphModel} kindFilter={graphKindFilter} activeOnly={graphActiveOnly} activation={activation} graphMotionReduced={graphMotionReduced} selectedNodeId={selectedGraphNode?.id} onNodeSelect={selectGraphNode} onLinkSelect={(edgeId) => setGraphSelection({ type: "edge", edgeId })} onClear={() => setGraphSelection(null)} /></Suspense></GraphCanvasBoundary> : renderAccessibleGraphList({ nodes: filteredNodes, links: filteredLinks, activation, selected: graphSelection, onNodeSelect: selectGraphNode, onLinkSelect: (edgeId) => setGraphSelection({ type: "edge", edgeId }) })}</div><div className="graph-footnote"><span>노드 {filteredNodes.length}개 · 연결 {filteredLinks.length}개</span><span>실선: 사용자 evidence · 시안: 데모에서 실제로 지정한 이벤트 연결</span></div></div><div className="splitter" role="separator" tabIndex={0} aria-label="그래프 근거 패널 너비 조절" aria-orientation="vertical" aria-valuemin={280} aria-valuemax={440} aria-valuenow={inspectorWidth} onPointerDown={handleSplitterPointerDown} onKeyDown={handleSplitterKeyDown} />{!inspectorHidden && <GraphEvidencePanel node={selectedGraphNode} link={selectedGraphLink} activation={activation} onClose={() => setInspectorHidden(true)} />}</div>;
+  }
+
+  function GraphFallback({ onList }: { onList: () => void }) {
+    return <div className="graph-fallback" role="status"><strong>3D 캔버스를 사용할 수 없습니다.</strong><p>WebGL을 사용할 수 없는 환경에서도 아래 목록 대안으로 같은 자료와 근거에 접근할 수 있습니다.</p><button className="btn btn-secondary" type="button" onClick={onList}>목록 대안 열기</button></div>;
+  }
+
+  function renderAccessibleGraphList({ nodes, links, activation, selected, onNodeSelect, onLinkSelect }: { nodes: GraphNode[]; links: GraphLink[]; activation: ActivationState; selected: GraphSelection; onNodeSelect: (nodeId: string) => void; onLinkSelect: (edgeId: string) => void }) {
+    return <section className="graph-list-view" aria-label="그래프 접근 가능한 목록"><div className="graph-list-heading"><div><h2>그래프 목록</h2><p className="small muted">키보드로 자료·메모를 선택하면 오른쪽 근거 패널에서 원문과 저장 이유를 확인할 수 있습니다.</p></div><span className="tag">{nodes.length}개 노드</span></div><ul className="graph-node-list">{nodes.map((node) => <li key={node.id}><button className={`graph-node-row ${selected?.type === "node" && selected.nodeId === node.id ? "selected" : ""}`} type="button" aria-pressed={selected?.type === "node" && selected.nodeId === node.id} onClick={() => onNodeSelect(node.id)}><span className={`graph-marker marker-${node.kind}`} aria-hidden="true">{node.kind === "source" ? "□" : node.kind === "memory" ? "●" : "◇"}</span><span className="graph-node-copy"><strong>{node.title}</strong><small>{graphNodeKindLabel(node.kind)} · {node.label}{node.stale ? " · 오래된 자료" : ""}</small></span><span className="graph-stage-badges">{(activation.nodeStages[node.id] ?? []).map((stage) => <span className="graph-stage-badge" key={stage}>{stageShortLabel(stage)}</span>)}</span></button></li>)}</ul>{links.length > 0 ? <><div className="subhead graph-list-subhead">연결</div><ul className="graph-edge-list">{links.map((link) => <li key={link.id}><button className={`graph-edge-row ${selected?.type === "edge" && selected.edgeId === link.id ? "selected" : ""}`} type="button" aria-pressed={selected?.type === "edge" && selected.edgeId === link.id} onClick={() => onLinkSelect(link.id)}><span className="graph-edge-line" aria-hidden="true" /><span><strong>{graphLinkKindLabel(link.kind)}</strong><small>{link.label}</small></span>{activation.activeEdgeIds.includes(link.id) && <span className="graph-stage-badge">활성</span>}</button></li>)}</ul></> : <div className="empty">현재 필터에 표시할 연결이 없습니다.</div>}</section>;
   }
 
   function OverviewPage({ title }: { title: string }) {
@@ -831,6 +924,32 @@ function App() {
     return <div className="setting-row"><div><strong>{title}</strong><p>{description}</p></div><div className="setting-control">{children}</div></div>;
   }
 
+  function GraphEvidencePanel({ node, link, activation, onClose }: { node?: GraphNode; link?: GraphLink; activation: ActivationState; onClose: () => void }) {
+    if (link) {
+      const from = graphModel.nodes.find((item) => item.id === link.sourceId);
+      const to = graphModel.nodes.find((item) => item.id === link.targetId);
+      return <aside className="evidence graph-evidence" aria-label="선택한 그래프 연결의 근거"><div className="row-between"><h2>연결 근거</h2><button className="tool panel-close" type="button" aria-label="그래프 근거 패널 닫기" onClick={onClose}><Icon name="close" /></button></div><div className="evidence-title">{graphLinkKindLabel(link.kind)}</div><div className="graph-inspector-path"><span>{from?.title ?? link.sourceId}</span><span aria-hidden="true">→</span><span>{to?.title ?? link.targetId}</span></div><div className="label">연결 설명</div><blockquote>{link.label}</blockquote><dl className="metadata"><dt>출처</dt><dd>{link.provenance === "explicit" ? "사용자가 선택한 evidence" : "데모 fixture · 실제 관측 아님"}</dd><dt>활성화</dt><dd>{activation.activeEdgeIds.includes(link.id) ? "선택한 데모 이벤트에서 지정됨" : "활성화되지 않음"}</dd><dt>간선 ID</dt><dd className="mono">{link.id}</dd></dl><p className="footnote">노드 양끝이 활성화됐다는 이유만으로 이 연결을 활성화하지 않습니다. 이벤트에 지정된 간선만 강조합니다.</p></aside>;
+    }
+    if (!node) return <aside className="evidence empty-evidence graph-evidence"><div className="row-between"><h2>그래프 근거</h2><button className="tool panel-close" type="button" aria-label="그래프 근거 패널 닫기" onClick={onClose}><Icon name="close" /></button></div><p>그래프에서 자료나 메모를 선택하면 실제 연결·원문·저장 이유를 확인할 수 있습니다.</p><p className="footnote">3D 캔버스가 보이지 않으면 목록 대안에서도 같은 선택과 패널을 사용할 수 있습니다.</p></aside>;
+
+    if (node.kind === "request") {
+      return <aside className="evidence graph-evidence" aria-label="데모 요청 정보"><div className="row-between"><h2>데모 요청</h2><button className="tool panel-close" type="button" aria-label="그래프 근거 패널 닫기" onClick={onClose}><Icon name="close" /></button></div><div className="evidence-title">{node.title}</div><div className="notice">실제 AI 요청이나 에이전트 수신을 나타내지 않습니다. 버튼을 눌렀을 때만 결정적 fixture 이벤트를 재생합니다.</div><div className="label">현재 단계</div><blockquote>{activation.currentStage ? stageLabel(activation.currentStage) : "아직 재생하지 않음"}</blockquote><dl className="metadata"><dt>요청 ID</dt><dd className="mono">{activation.requestId ?? node.id}</dd><dt>관측 주체</dt><dd>demo_fixture</dd><dt>진행</dt><dd>{activation.cursor < 0 ? "0" : activation.cursor + 1} / {activation.events.length}</dd></dl></aside>;
+    }
+
+    if (node.kind === "source" && node.sourceId !== undefined) {
+      const source = sources.find((item) => item.id === node.sourceId);
+      if (!source) return null;
+      const linkedNotes = activeWorkNotes.filter((note) => note.sources.includes(source.id));
+      return <aside className="evidence graph-evidence" aria-label="선택한 자료의 근거"><div className="row-between"><h2>자료 근거</h2><button className="tool panel-close" type="button" aria-label="그래프 근거 패널 닫기" onClick={onClose}><Icon name="close" /></button></div><div className="evidence-title">{source.title}</div><div className="source-head"><span className={`provider provider-${source.provider.toLowerCase()}`}>{source.provider[0]}</span>{source.provider}<span className="muted source-state">{source.stale ? "오래된 자료" : "캐시"}</span></div><div className="label">수집한 원문 발췌</div><blockquote>{source.body}</blockquote><dl className="metadata"><dt>참조</dt><dd>{source.ref}</dd><dt>마지막 확인</dt><dd className="mono">{source.time}</dd><dt>상태</dt><dd>{source.stale ? "stale · 재확인 필요" : "accessible · 예시 캐시"}</dd><dt>연결 메모</dt><dd>{linkedNotes.length}개</dd></dl><div className="actions"><button className="btn btn-secondary" type="button" onClick={() => setDetail({ type: "source", source })}>원문 보기</button></div>{linkedNotes.length > 0 && <><div className="label">이 자료를 근거로 삼은 메모</div><div className="graph-related-list">{linkedNotes.map((note) => <button key={note.id} type="button" onClick={() => selectGraphNode(noteGraphId(note))}><span>{note.kind}</span>{note.title}</button>)}</div></>}</aside>;
+    }
+
+    const note = node.noteId === undefined ? undefined : notes.find((item) => item.id === node.noteId);
+    if (!note) return null;
+    const linkedSources = note.nativeId ? [] : sources.filter((source) => note.sources.includes(source.id));
+    const stages = activation.nodeStages[node.id] ?? [];
+    return <aside className="evidence graph-evidence" aria-label="선택한 메모의 근거"><div className="row-between"><h2>메모 근거</h2><button className="tool panel-close" type="button" aria-label="그래프 근거 패널 닫기" onClick={onClose}><Icon name="close" /></button></div><div className="evidence-title">{note.title}</div>{stages.length > 0 && <div className="graph-stage-badges graph-stage-badges--panel">{stages.map((stage) => <span className="graph-stage-badge" key={stage}>{stageLabel(stage)}</span>)}</div>}<div className="label">메모 본문</div><blockquote>{note.body}</blockquote><div className="label">왜 기억했나요?</div><blockquote>{note.reason}</blockquote><dl className="metadata"><dt>작성 주체</dt><dd>{note.author}</dd><dt>기록 유형</dt><dd>{note.kind}</dd><dt>버전</dt><dd className="mono">{note.version ?? 1}</dd><dt>근거</dt><dd>{note.nativeId ? note.nativeEvidence?.length ?? 0 : linkedSources.length}개 · {works[note.work]}</dd></dl><div className="label">연결된 원본</div><div className="graph-related-list">{note.nativeId && graphModel.links.filter((edge) => edge.kind === "evidence" && edge.targetId === node.id).map((edge) => <button key={edge.id} type="button" onClick={() => selectGraphNode(edge.sourceId)}>{graphModel.nodes.find((item) => item.id === edge.sourceId)?.title}</button>)}{linkedSources.map((source) => <button key={source.id} type="button" onClick={() => selectGraphNode(sourceGraphId(source.id))}><span>{source.provider}</span>{source.title}</button>)}</div><div className="actions">{!note.retracted && <><button className="btn btn-secondary" type="button" onClick={() => openEditor(note.id)}>메모 수정</button><button className="btn btn-ghost" type="button" onClick={() => { void retractNote(note); }}>철회</button></>}<button className="btn btn-ghost" type="button" onClick={() => setDetail({ type: "history", note })}>변경 이력</button></div><p className="footnote">현재 Core에는 AI 추적 계약이 없어 실제 사용·프롬프트 포함을 표시하지 않습니다. 재생 단계는 fixture로만 구분됩니다.</p></aside>;
+  }
+
   function EvidencePanel() {
     if (!selectedNote) return <aside className="evidence empty-evidence"><h2>연결된 근거</h2><p>메모를 선택하면 근거를 확인할 수 있습니다.</p></aside>;
     const linkedSources = sources.filter((source) => selectedNote.sources.includes(source.id));
@@ -859,9 +978,9 @@ function App() {
   function exportDiagnostics() { downloadJson("aidebook-diagnostics.json", { type: "local-ui", version: status?.version ?? "0.1.0", externalConnections: false, exportedAt: new Date().toISOString() }); setToast("진단 예시를 내보냈습니다."); }
   function downloadJson(filename: string, value: unknown) { const blob = new Blob([JSON.stringify(value, null, 2)], { type: "application/json" }); const url = URL.createObjectURL(blob); const anchor = document.createElement("a"); anchor.href = url; anchor.download = filename; anchor.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000); }
 
-  return <div className={`shell ${sidebarHidden ? "sidebar-hidden" : ""} ${sidebarMobileOpen ? "sidebar-mobile-open" : ""} ${inspectorHidden ? "inspector-hidden" : ""}`}><aside className="sidebar" aria-label="주요 메뉴"><div className="brand"><Icon name="brand" /><span>Aidebook</span></div><nav className="main-nav" aria-label="주요 메뉴"><NavButton active={page === "home"} icon="work" onClick={() => navigate("home")}>최근 맥락</NavButton><NavButton active={page === "notes"} icon="notes" onClick={() => navigate("notes")}>모든 메모<span className="count">{notes.filter((note) => !note.retracted).length}</span></NavButton><NavButton active={page === "activity"} icon="activity" onClick={() => navigate("activity")}>활동 기록</NavButton></nav><div className="works"><p className="navlabel">작업 묶음</p><div>{works.map((name, index) => <button className={`navbtn work ${page === "work" && work === index ? "active" : ""}`} type="button" key={name} aria-current={page === "work" && work === index ? "page" : undefined} onClick={() => chooseWork(index)}><span className="dot" /><span>{name}</span><span className="count">{notes.filter((note) => note.work === index && !note.retracted).length}</span></button>)}</div></div><div className="sidebar-bottom"><button className={`navbtn ${page === "connections" ? "active" : ""}`} type="button" onClick={() => navigate("connections")}><Icon name="link" />연결 상태<span className="count">1</span></button><button className={`navbtn ${page === "settings" ? "active" : ""}`} type="button" onClick={() => navigate("settings")}><Icon name="settings" />설정<span className="count">⌘ ,</span></button><div className="profile"><span className="avatar">나</span><div>개인 작업 공간<div className="small muted">이 기기에 보관</div></div></div></div></aside><main className="main" id="content"><header className="topbar"><button className="tool" type="button" aria-label="사이드바 접기 또는 펼치기" aria-expanded={!sidebarHidden} onClick={() => { if (window.innerWidth <= 760) setSidebarMobileOpen((open) => !open); else setSidebarHidden((hidden) => !hidden); }}><Icon name="panel-left" /></button><div className="crumb">{pageTitle()}</div><button className="search-launch" type="button" onClick={() => navigate("search")}><Icon name="search" />자료와 메모 검색 <kbd>⌘ K</kbd></button><span className="tag">예시 데이터</span><button className="tool inspector-toggle" type="button" aria-label="메모 근거 패널" aria-expanded={!inspectorHidden} onClick={() => setInspectorHidden((hidden) => !hidden)}><Icon name="panel-right" /></button></header><div id="view" tabIndex={-1}>{renderPage()}</div></main>{editor && <EditorModal />}{detail && <DetailModal />}{toast && <div className="toast" role="status">{toast}{undoStack.length > 0 && <button type="button" onClick={undoChange}>되돌리기</button>}</div>}</div>;
+  return <div className={`shell ${sidebarHidden ? "sidebar-hidden" : ""} ${sidebarMobileOpen ? "sidebar-mobile-open" : ""} ${inspectorHidden ? "inspector-hidden" : ""}`}><aside className="sidebar" aria-label="주요 메뉴"><div className="brand"><Icon name="brand" /><span>Aidebook</span></div><nav className="main-nav" aria-label="주요 메뉴"><NavButton active={page === "home"} icon="work" onClick={() => navigate("home")}>최근 맥락</NavButton><NavButton active={page === "notes"} icon="notes" onClick={() => navigate("notes")}>모든 메모<span className="count">{notes.filter((note) => !note.retracted).length}</span></NavButton><NavButton active={page === "activity"} icon="activity" onClick={() => navigate("activity")}>활동 기록</NavButton><NavButton active={page === "graph"} icon="graph" onClick={() => navigate("graph")}>그래프<span className="count">{activeWorkNotes.length}</span></NavButton></nav><div className="works"><p className="navlabel">작업 묶음</p><div>{works.map((name, index) => <button className={`navbtn work ${page === "work" && work === index ? "active" : ""}`} type="button" key={name} aria-current={page === "work" && work === index ? "page" : undefined} onClick={() => chooseWork(index)}><span className="dot" /><span>{name}</span><span className="count">{notes.filter((note) => note.work === index && !note.retracted).length}</span></button>)}</div></div><div className="sidebar-bottom"><button className={`navbtn ${page === "connections" ? "active" : ""}`} type="button" onClick={() => navigate("connections")}><Icon name="link" />연결 상태<span className="count">1</span></button><button className={`navbtn ${page === "settings" ? "active" : ""}`} type="button" onClick={() => navigate("settings")}><Icon name="settings" />설정<span className="count">⌘ ,</span></button><div className="profile"><span className="avatar">나</span><div>개인 작업 공간<div className="small muted">이 기기에 보관</div></div></div></div></aside><main className="main" id="content"><header className="topbar"><button className="tool" type="button" aria-label="사이드바 접기 또는 펼치기" aria-expanded={!sidebarHidden} onClick={() => { if (window.innerWidth <= 760) setSidebarMobileOpen((open) => !open); else setSidebarHidden((hidden) => !hidden); }}><Icon name="panel-left" /></button><div className="crumb">{pageTitle()}</div><button className="search-launch" type="button" onClick={() => navigate("search")}><Icon name="search" />자료와 메모 검색 <kbd>⌘ K</kbd></button><span className="tag">예시 데이터</span><button className="tool inspector-toggle" type="button" aria-label="메모 근거 패널" aria-expanded={!inspectorHidden} onClick={() => setInspectorHidden((hidden) => !hidden)}><Icon name="panel-right" /></button></header><div id="view" tabIndex={-1}>{renderPage()}</div></main>{editor && <EditorModal />}{detail && <DetailModal />}{toast && <div className="toast" role="status">{toast}{undoStack.length > 0 && <button type="button" onClick={undoChange}>되돌리기</button>}</div>}</div>;
 
-  function NavButton({ active, icon, onClick, children }: { active: boolean; icon: "work" | "notes" | "activity"; onClick: () => void; children: ReactNode }) { return <button className={`navbtn ${active ? "active" : ""}`} type="button" aria-current={active ? "page" : undefined} onClick={onClick}><Icon name={icon} />{children}</button>; }
+  function NavButton({ active, icon, onClick, children }: { active: boolean; icon: "work" | "notes" | "activity" | "graph"; onClick: () => void; children: ReactNode }) { return <button className={`navbtn ${active ? "active" : ""}`} type="button" aria-current={active ? "page" : undefined} onClick={onClick}><Icon name={icon} />{children}</button>; }
 
   function EditorModal() {
     if (!editor) return null;

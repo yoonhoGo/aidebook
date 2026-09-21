@@ -253,3 +253,14 @@ M5 구현 `ympmpyot`을 순서대로 기록했다. 당시 main 이력·원격·p
 로컬 main에 기능별 jj 변경과 독립 검토 수정을 병합했다. 원격 push는 수행하지
 않았으며 기존 Jev 작업은 별도 작업 변경으로 보존했다. 재현 명령·검증 범위와
 변경 ID는 [MEMORY_GRAPH_VALIDATION.md](./MEMORY_GRAPH_VALIDATION.md)에 기록한다.
+
+## 그래프 탐색 UI — 통합 완료 · native/live 검증 대기 (2026-09-21)
+
+사이드바의 그래프에서 현재 작업 메모·근거를 3D 또는 키보드 목록으로 탐색한다.
+`neurun`의 미커밋 UI를 현재 메인의 후보 검토·맥락 검색·Markdown 교환과 함께 통합했다.
+메모에 저장된 native 근거 참조는 정확한 계정·자료 식별자로 구분하며 원문·freshness는
+미조회로 표시한다. 이 화면은 Core의 전체 파생 문서 그래프를 조회하지 않는다.
+AI 활성화는 사용자가 실행하는 fixture 재생이며 실제 agent 추적은 아니다.
+
+빌드, 그래프 회귀 테스트, 브라우저 UI 확인 및 남은 경계는
+[그래프 UI 통합 검토](GRAPH_UI_INTEGRATION.md)에 기록한다.
