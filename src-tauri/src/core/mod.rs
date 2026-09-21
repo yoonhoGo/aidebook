@@ -25,7 +25,7 @@ pub use github::{
 };
 pub use ipc::{
     dispatch as ipc_dispatch, CoreClient, CoreEndpoint, CoreServer, IpcError, IpcRequest,
-    IpcResponse, IPC_METHODS,
+    IpcResponse, IPC_METHODS, LEGACY_IPC_METHODS,
 };
 pub use obsidian::{
     ObsidianAdapter, VaultChange, VaultChangeKind, VaultConfig, VaultIndex, VaultScanResult,
@@ -181,6 +181,10 @@ impl Core {
 
     pub fn context(&self, request: ContextRequest) -> CoreResult<ContextResponse> {
         self.database.context(request)
+    }
+
+    pub fn context_query(&self, request: ContextQueryRequest) -> CoreResult<ContextQueryResponse> {
+        self.database.context_query(request)
     }
 
     pub fn context_get(&self, request: ContextRequest) -> CoreResult<ContextResponse> {

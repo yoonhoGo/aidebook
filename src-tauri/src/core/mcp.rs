@@ -60,6 +60,53 @@ pub fn tool_descriptors() -> Vec<Value> {
                     }),
                     Vec::new(),
                 ),
+                "context.query.v1" => (
+                    "Query sources, review-approved memories, graph evidence, freshness, and availability as one bounded context packet.",
+                    json!({
+                        "query": {"type":"string","maxLength":500},
+                        "source_id": {"type":["string","null"]},
+                        "source": {"type":["object","null"]},
+                        "provider": {"type":["string","null"]},
+                        "kind": {"type":["string","null"]},
+                        "max_age_seconds": {"type":["integer","null"],"minimum":0},
+                        "max_depth": {"type":["integer","null"],"minimum":1,"maximum":8},
+                        "max_nodes": {"type":["integer","null"],"minimum":1,"maximum":200},
+                        "max_edges": {"type":["integer","null"],"minimum":1,"maximum":400},
+                        "max_sources": {"type":["integer","null"],"minimum":1,"maximum":50},
+                        "max_memories": {"type":["integer","null"],"minimum":1,"maximum":100}
+                    }),
+                    vec!["query"],
+                ),
+                "observation.capture" => (
+                    "Capture an evidence-backed local observation for later candidate distillation.",
+                    json!({
+                        "id": {"type":["string","null"]},
+                        "session_id": {"type":"string"},
+                        "body": {"type":"string"},
+                        "evidence": {"type":"array", "items":{"type":"object"}},
+                        "actor": {"type":"string"},
+                        "idempotency_key": {"type":"string"}
+                    }),
+                    vec!["session_id", "body", "evidence", "actor", "idempotency_key"],
+                ),
+                "observation.get" => (
+                    "Read one captured observation by ID.",
+                    json!({"id":{"type":"string"}}),
+                    vec!["id"],
+                ),
+                "candidate.distill" => (
+                    "Distill one captured observation into a review candidate; it does not create a canonical memory.",
+                    json!({
+                        "observation_id": {"type":"string"},
+                        "body": {"type":"string"},
+                        "reason": {"type":"string"},
+                        "author": {"type":"string"},
+                        "claim_type": {"type":"string"},
+                        "idempotency_key": {"type":"string"},
+                        "expected_version": {"type":["integer","null"],"minimum":1}
+                    }),
+                    vec!["observation_id", "body", "reason", "author", "claim_type", "idempotency_key"],
+                ),
                 "memory.upsert" => (
                     "Create or update a user-owned memory with evidence and version guards.",
                     json!({
@@ -90,6 +137,25 @@ pub fn tool_descriptors() -> Vec<Value> {
                         "idempotency_key": {"type":"string"}
                     }),
                     vec!["id", "expected_version", "idempotency_key"],
+                ),
+                "candidate.propose" => (
+                    "Move a distilled memory candidate into the human review queue. Acceptance remains a trusted Tauri review action.",
+                    json!({
+                        "id": {"type":"string"},
+                        "expected_version": {"type":"integer","minimum":1},
+                        "idempotency_key": {"type":"string"}
+                    }),
+                    vec!["id", "expected_version", "idempotency_key"],
+                ),
+                "candidate.get" => (
+                    "Read one memory candidate and its review state by ID.",
+                    json!({"id":{"type":"string"}}),
+                    vec!["id"],
+                ),
+                "candidate.list" => (
+                    "List memory candidates for a review queue; this never accepts or rejects a candidate.",
+                    json!({"state":{"type":["string","null"],"enum":["captured","distilled","proposed","accepted","rejected"]}}),
+                    Vec::new(),
                 ),
                 "sources.refresh" => (
                     "Refresh an explicitly supplied read-only fixture through the Core.",
@@ -251,9 +317,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tool_list_has_the_six_core_methods() {
+    fn tool_list_has_legacy_and_review_safe_methods() {
         let tools = tool_descriptors();
-        assert_eq!(tools.len(), 6);
+        assert_eq!(tools.len(), IPC_METHODS.len());
         assert_eq!(
             tools
                 .iter()
@@ -261,5 +327,6 @@ mod tests {
                 .collect::<Vec<_>>(),
             IPC_METHODS.to_vec()
         );
+        assert!(tools.iter().all(|tool| tool["name"] != "candidate.accept"));
     }
 }

@@ -2,11 +2,12 @@ pub mod core;
 
 use core::{
     CandidateAcceptInput, CandidateDistillInput, CandidateProposeInput, CandidateRejectInput,
-    CandidateState, ContextRequest, Core, CoreEndpoint, CoreError, CoreServer, CredentialStore,
-    GitHubAdapter, GitHubConfig, HttpGitHubApi, KeychainCredentialStore, MemoryRestoreInput,
-    MemoryRetractInput, MemoryUpsertInput, ObservationCaptureInput, ObsidianAdapter,
-    ReadOnlyConnector, RelationInput, SearchRequest, Snapshot, SourceRef, SourcesRefreshResult,
-    UiMemoryUpsertInput, VaultChange, VaultConfig, VaultScanResult, VaultWatcher,
+    CandidateState, ContextQueryRequest, ContextRequest, Core, CoreEndpoint, CoreError, CoreServer,
+    CredentialStore, GitHubAdapter, GitHubConfig, HttpGitHubApi, KeychainCredentialStore,
+    MemoryRestoreInput, MemoryRetractInput, MemoryUpsertInput, ObservationCaptureInput,
+    ObsidianAdapter, ReadOnlyConnector, RelationInput, SearchRequest, Snapshot, SourceRef,
+    SourcesRefreshResult, UiMemoryUpsertInput, VaultChange, VaultConfig, VaultScanResult,
+    VaultWatcher,
 };
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -273,6 +274,14 @@ fn context_get(
 }
 
 #[tauri::command]
+fn context_query(
+    request: ContextQueryRequest,
+    state: State<'_, AppState>,
+) -> Result<core::ContextQueryResponse, CoreError> {
+    state.core.context_query(request)
+}
+
+#[tauri::command]
 fn relation_add(input: RelationInput, state: State<'_, AppState>) -> Result<(), CoreError> {
     state.core.add_relation(input)
 }
@@ -355,6 +364,19 @@ fn candidate_list(
     state: State<'_, AppState>,
 ) -> Result<Vec<core::MemoryCandidate>, CoreError> {
     state.core.candidates(state_filter)
+}
+
+#[tauri::command]
+fn observation_get(id: String, state: State<'_, AppState>) -> Result<core::Observation, CoreError> {
+    state.core.observation(&id)
+}
+
+#[tauri::command]
+fn candidate_get(
+    id: String,
+    state: State<'_, AppState>,
+) -> Result<core::MemoryCandidate, CoreError> {
+    state.core.candidate(&id)
 }
 
 fn ensure_ui_evidence(core: &Core, evidence: &[SourceRef]) -> Result<(), CoreError> {
@@ -469,6 +491,7 @@ pub fn run() {
             github_disconnect,
             context_search,
             context_get,
+            context_query,
             relation_add,
             relation_remove,
             memory_upsert,
@@ -480,6 +503,8 @@ pub fn run() {
             candidate_accept,
             candidate_reject,
             candidate_list,
+            observation_get,
+            candidate_get,
             ui_memory_upsert,
             ui_memory_retract,
             ui_memory_restore,

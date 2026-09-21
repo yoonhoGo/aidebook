@@ -104,7 +104,11 @@ MCP는 candidate를 읽고 propose하는 호출까지만 제공한다. acceptanc
 기존 `context.search`, `context.get`, `memory.upsert`, `memory.retract`,
 `sources.refresh`, `connections.status`의 request/response와 의미는 바꾸지
 않는다. `context.query.v1`는 별도 IPC method, CLI subcommand, read-only MCP
-tool, Tauri command를 통해 추가한다.
+tool, Tauri command를 통해 추가한다. G2의 observation capture/get,
+candidate distill/propose/get/list도 같은 인증된 IPC/CLI/MCP 경계에서 사용할
+수 있어 로컬 에이전트가 관찰 → 후보 정제 → 검토 제안 흐름을 끝까지 만들 수
+있다. `candidate.accept`와 `candidate.reject`는 이 transport 목록에 없고
+trusted Tauri review command에만 남는다.
 
 ## G4 Markdown 교환·검토
 

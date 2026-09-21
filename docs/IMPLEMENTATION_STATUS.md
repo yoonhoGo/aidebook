@@ -52,12 +52,33 @@ freshness와 접근 상태는 실제 provider, iCloud/FSEvents, native window �
   중복/충돌 idempotency 요청을 재생 또는 거부; rejected candidate는 canonical
   memory를 만들지 않음
 - acceptance는 generic IPC/MCP tool에 노출하지 않고 trusted Tauri review
-  command 경계에 둔다. observation/candidate propose transport는 다음 G3에서
-  read/propose 용도로 연결한다.
+  command 경계에 둔다. observation/candidate read·distill·propose transport는
+  G3에서 연결했다.
 
 G2의 candidate 결과는 로컬 fixture/in-memory Core에서 검증했으며 자동화된
 agent가 acceptance를 호출하는 경로를 제공하지 않는다. native Tauri review
 화면과 live provider evidence는 G4 및 별도 native/live 검증 경계다.
+
+## G3 — 구현 완료 · native/live 검증 대기 (bounded context query와 transport)
+
+- `context.query.v1`가 FTS5 lexical source, canonical memory, graph traversal를
+  한 응답으로 묶고 provider/kind, freshness, max-age, evidence
+  unavailable/stale, missing provider와 conflict diagnostics를 반환
+- 명시적인 root가 없을 때 첫 lexical source가 memory 검색 범위를 제한하지
+  않으며, cache clear·새 graph node·revoked/deleted source도 전체 packet을
+  실패시키지 않고 상태 배열/diagnostics로 보고
+- query length, depth/node/edge/source/memory bounds를 검증하고 source 또는
+  memory limit 도달도 `bounds.truncated`로 표시; graph expansion은 filter와
+  동일한 provider/kind namespace를 적용
+- 기존 여섯 IPC method를 유지한 채 `context.query.v1`, observation
+  capture/get, candidate distill/propose/get/list를 authenticated IPC,
+  `aidebook-cli`, MCP stdio, Tauri command에 연결
+- `candidate.accept`와 `candidate.reject`는 generic IPC/MCP allowlist와 MCP
+  `tools/list`에서 제외하고 trusted Tauri review command에만 유지
+
+G3 context review 6개와 M4 IPC/MCP integration 1개, Rust unit 11개가 통과했다.
+CLI/MCP transport와 fixture/in-memory Core는 검증했지만 packaged external MCP
+host, native Tauri window, live provider는 여전히 별도 검증 경계다.
 
 ## M1 — 구현 완료 · native 검증 대기 (선택된 Obsidian vault)
 
@@ -124,16 +145,17 @@ M1의 watcher는 재현 가능한 polling 구현이다. native FSEvents와 실�
   검사로 복수 owner를 거부
 - bearer token과 constant-time 비교, 구조화 `unauthenticated`/owner 오류,
   SQLite·SQL path를 받지 않는 line-delimited JSON IPC 구현
-- `aidebook-cli`가 동일 six method를 호출하고 성공 JSON은 stdout, 오류 JSON은
-  stderr에 출력; `aidebook-core` standalone owner도 제공
-- `mcp serve --stdio`가 initialize, tools/list, tools/call과 동일 six tool을
+- `aidebook-cli`가 기존 six method와 versioned context/candidate transport를
+  호출하고 성공 JSON은 stdout, 오류 JSON은 stderr에 출력;
+  `aidebook-core` standalone owner도 제공
+- `mcp serve --stdio`가 initialize, tools/list, tools/call과 동일 13개 tool을
   노출하며 tool 결과·오류를 Core IPC로 전달
 - IPC integration test에서 direct Core/CLI client/MCP tool 결과 일치, fixture
-  refresh, 잘못된 token 거부, six tool count를 검증
+  refresh, 잘못된 token 거부, legacy method 호환과 13개 tool count를 검증
 - Tauri `WindowEvent::Destroyed`가 Core server stop flag를 설정해 socket/token/lock
   정리를 요청하며, 실제 native 창 종료·재시작 smoke는 별도로 남김
 - arm64 staged `aidebook-core` + `aidebook-cli`를 임시 DB/socket으로 실행해
-  구조화된 stderr 오류와 MCP `tools/list` 6개 응답을 확인
+  구조화된 stderr 오류와 MCP `tools/list` 13개 응답(accept/reject 미노출)을 확인
 - standalone owner를 강제 종료한 뒤 stale PID lock/socket을 회수하고 같은
   endpoint로 재시작하는 local smoke도 통과
 
@@ -163,13 +185,13 @@ Keychain/실계정 provider와 함께 실행하는 native smoke는 아직 검증
 | 명령 | 결과 |
 | --- | --- |
 | `npm run build` | 통과: `tsc` + Vite production build |
-| `cargo test --manifest-path src-tauri/Cargo.toml` | 통과: Rust unit 11개, graph integration 7개, candidate lifecycle/review integration 4개, M0 integration 6개, M1 integration 1개, M2 integration 2개, M3 integration 3개, M4 integration 1개, M5 storage 4개, M5 benchmark 1개 |
+| `cargo test --manifest-path src-tauri/Cargo.toml` | 통과: Rust unit 11개, graph integration 7개, candidate lifecycle/review integration 4개, context review 6개, M0 integration 6개, M1 integration 1개, M2 integration 2개, M3 integration 3개, M4 integration 1개, M5 storage 4개, M5 benchmark 1개 |
 | `cargo check --manifest-path src-tauri/Cargo.toml` | 통과 |
 | `git diff --check` | 통과 |
 | `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` | 통과 |
 | `cargo test --manifest-path src-tauri/Cargo.toml --test m5_benchmark -- --nocapture` | 통과: seed=20260919, n=10000, warmup=5, runs=30, p95=24.509ms, macOS aarch64 |
 | `AIDEBOOK_PACKAGE_DIR=/tmp/aidebook-arm64-package scripts/package-arm64.sh` | 통과: arm64 local binaries 3개 staged; 서명/공증/릴리스 미실행 |
-| staged `aidebook-core` + `aidebook-cli` local smoke | 통과: `connections.status` structured stderr, MCP `tools/list` 6개; third-party host/native window 미검증 |
+| staged `aidebook-core` + `aidebook-cli` local smoke | 통과: `connections.status` structured stderr, MCP `tools/list` 13개(accept/reject 미노출); third-party host/native window 미검증 |
 
 ## 검증하지 않은 경계
 

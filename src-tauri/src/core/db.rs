@@ -685,6 +685,189 @@ impl Database {
         })
     }
 
+    pub fn context_query(&self, request: ContextQueryRequest) -> CoreResult<ContextQueryResponse> {
+        request.validate()?;
+        let max_depth = request.max_depth.unwrap_or(1);
+        let max_nodes = request.max_nodes.unwrap_or(50);
+        let max_edges = request.max_edges.unwrap_or(100);
+        let max_sources = request.max_sources.unwrap_or(DEFAULT_SEARCH_LIMIT);
+        let max_memories = request.max_memories.unwrap_or(50);
+        let sources = self.search(SearchRequest {
+            query: request.query.clone(),
+            provider: request.provider.clone(),
+            kind: request.kind.clone(),
+            source_updated_after: None,
+            source_updated_before: None,
+            max_age_seconds: request.max_age_seconds,
+            limit: Some(max_sources),
+        })?;
+        let explicit_root_id = if let Some(source_id) = request.source_id.clone() {
+            Some(source_id)
+        } else if let Some(source) = request.source.clone() {
+            Some(source.id())
+        } else {
+            None
+        };
+        let graph_root_id = explicit_root_id
+            .clone()
+            .or_else(|| sources.results.first().map(|result| result.source.id()));
+        let mut conflicts = Vec::new();
+        let graph = if let Some(root_id) = graph_root_id {
+            match self.graph_traverse(GraphTraversalRequest {
+                source_id: Some(root_id),
+                source: None,
+                max_depth: Some(max_depth),
+                max_nodes: Some(max_nodes),
+                max_edges: Some(max_edges),
+            }) {
+                Ok(graph) => Some(filter_graph_response(
+                    graph,
+                    request.provider.as_deref(),
+                    request.kind.as_deref(),
+                )),
+                Err(CoreError::NotFound { entity, id })
+                    if entity == "graph build" || entity == "graph node" =>
+                {
+                    conflicts.push(format!("graph {entity} unavailable for {id}"));
+                    None
+                }
+                Err(error) => return Err(error),
+            }
+        } else {
+            None
+        };
+        let memories = self.search_memories(
+            &request.query,
+            explicit_root_id.as_deref(),
+            request.provider.as_deref(),
+            request.kind.as_deref(),
+            max_memories,
+        )?;
+        let mut unavailable_sources = Vec::new();
+        let mut stale_sources = sources
+            .results
+            .iter()
+            .filter(|result| matches!(result.freshness, Freshness::Stale))
+            .map(|result| result.source.clone())
+            .collect::<Vec<_>>();
+        if let Some(graph) = &graph {
+            unavailable_sources.extend(graph.unavailable_sources.clone());
+            stale_sources.extend(graph.stale_sources.clone());
+        }
+        for memory in &memories {
+            for evidence in &memory.evidence {
+                match self.snapshot(evidence) {
+                    Ok(snapshot) => {
+                        if !snapshot.access_status.is_searchable() || snapshot.is_deleted {
+                            unavailable_sources.push(snapshot.source);
+                        } else if matches!(
+                            freshness(
+                                &snapshot.access_status,
+                                &snapshot.fetched_at,
+                                request.max_age_seconds,
+                            )?,
+                            Freshness::Stale
+                        ) {
+                            stale_sources.push(snapshot.source);
+                        }
+                    }
+                    Err(CoreError::NotFound { .. }) => unavailable_sources.push(evidence.clone()),
+                    Err(error) => return Err(error),
+                }
+            }
+        }
+        unavailable_sources.sort_by_key(SourceRef::id);
+        unavailable_sources.dedup_by(|left, right| left.id() == right.id());
+        stale_sources.sort_by_key(SourceRef::id);
+        stale_sources.dedup_by(|left, right| left.id() == right.id());
+        let mut missing_providers = unavailable_sources
+            .iter()
+            .map(|source| source.provider.clone())
+            .collect::<Vec<_>>();
+        missing_providers.sort();
+        missing_providers.dedup();
+        let graph_truncated = graph.as_ref().is_some_and(|graph| graph.truncated);
+        let source_truncated = sources.results.len() >= max_sources;
+        let memory_truncated = memories.len() >= max_memories;
+        Ok(ContextQueryResponse {
+            api_version: "context.query.v1".to_string(),
+            query: request.query,
+            sources: sources.results,
+            memories,
+            graph,
+            unavailable_sources,
+            stale_sources,
+            conflicts,
+            missing_providers,
+            bounds: ContextQueryBounds {
+                max_depth,
+                max_nodes,
+                max_edges,
+                max_sources,
+                max_memories,
+                truncated: graph_truncated || source_truncated || memory_truncated,
+            },
+        })
+    }
+
+    fn search_memories(
+        &self,
+        query: &str,
+        root_id: Option<&str>,
+        provider: Option<&str>,
+        kind: Option<&str>,
+        limit: usize,
+    ) -> CoreResult<Vec<Memory>> {
+        let connection = self.lock()?;
+        let mut sql = String::from(
+            "SELECT DISTINCT m.id FROM memories m
+             WHERE m.retracted_at IS NULL",
+        );
+        let mut values = Vec::new();
+        let trimmed = query.trim();
+        if !trimmed.is_empty() {
+            sql.push_str(" AND (m.body LIKE ? OR m.reason LIKE ? OR m.claim_type LIKE ?)");
+            let value = Value::Text(format!("%{trimmed}%"));
+            values.extend([value.clone(), value.clone(), value]);
+        }
+        if provider.is_some() || kind.is_some() || root_id.is_some() {
+            sql.push_str(
+                " AND EXISTS (
+                    SELECT 1 FROM memory_evidence me
+                    JOIN sources es ON es.id = me.source_id
+                    WHERE me.memory_id = m.id",
+            );
+            if let Some(provider) = provider {
+                sql.push_str(" AND es.provider = ?");
+                values.push(Value::Text(provider.to_string()));
+            }
+            if let Some(kind) = kind {
+                sql.push_str(" AND es.kind = ?");
+                values.push(Value::Text(kind.to_string()));
+            }
+            if let Some(root_id) = root_id {
+                sql.push_str(" AND es.id = ?");
+                values.push(Value::Text(root_id.to_string()));
+            }
+            sql.push(')');
+        }
+        sql.push_str(" ORDER BY m.updated_at DESC, m.id LIMIT ?");
+        values.push(Value::Integer(limit as i64));
+        let mut statement = connection.prepare(&sql).map_err(database_error)?;
+        let rows = statement
+            .query_map(params_from_iter(values.iter()), |row| {
+                row.get::<_, String>(0)
+            })
+            .map_err(database_error)?;
+        let ids = rows
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(database_error)?;
+        drop(statement);
+        ids.into_iter()
+            .map(|id| load_memory(&connection, &id))
+            .collect()
+    }
+
     pub fn record_sync_success(
         &self,
         connection_id: impl Into<String>,
@@ -2569,6 +2752,37 @@ struct GraphEdgeRow {
     source_hash: String,
     target_hash: Option<String>,
     stale: bool,
+}
+
+fn filter_graph_response(
+    mut response: GraphTraversalResponse,
+    provider: Option<&str>,
+    kind: Option<&str>,
+) -> GraphTraversalResponse {
+    if provider.is_none() && kind.is_none() {
+        return response;
+    }
+    let matches_filter = |source: &SourceRef| {
+        provider.map_or(true, |value| source.provider == value)
+            && kind.map_or(true, |value| source.kind == value)
+    };
+    let allowed = response
+        .nodes
+        .iter()
+        .filter(|node| matches_filter(&node.source))
+        .map(|node| node.id.clone())
+        .collect::<HashSet<_>>();
+    response.nodes.retain(|node| allowed.contains(&node.id));
+    response.edges.retain(|edge| {
+        allowed.contains(&edge.from_source_id) && allowed.contains(&edge.to_source_id)
+    });
+    response
+        .unavailable_sources
+        .retain(|source| matches_filter(source));
+    response
+        .stale_sources
+        .retain(|source| matches_filter(source));
+    response
 }
 
 fn graph_link_digest(links: &[SourceLink]) -> String {

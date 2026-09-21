@@ -7,7 +7,9 @@
 
 use super::fixtures::FixtureAdapter;
 use super::types::{
-    ContextRequest, CoreError, CoreResult, MemoryRetractInput, MemoryUpsertInput, SearchRequest,
+    CandidateDistillInput, CandidateProposeInput, CandidateState, ContextQueryRequest,
+    ContextRequest, CoreError, CoreResult, MemoryRetractInput, MemoryUpsertInput,
+    ObservationCaptureInput, SearchRequest,
 };
 use super::Core;
 use serde::{Deserialize, Serialize};
@@ -25,13 +27,29 @@ use std::thread;
 use std::time::Duration;
 use uuid::Uuid;
 
-pub const IPC_METHODS: [&str; 6] = [
+pub const LEGACY_IPC_METHODS: [&str; 6] = [
     "context.search",
     "context.get",
     "memory.upsert",
     "memory.retract",
     "sources.refresh",
     "connections.status",
+];
+
+pub const IPC_METHODS: [&str; 13] = [
+    "context.search",
+    "context.get",
+    "memory.upsert",
+    "memory.retract",
+    "sources.refresh",
+    "connections.status",
+    "context.query.v1",
+    "observation.capture",
+    "observation.get",
+    "candidate.distill",
+    "candidate.propose",
+    "candidate.get",
+    "candidate.list",
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -380,6 +398,22 @@ pub fn dispatch(core: &Core, method: &str, params: Value) -> CoreResult<Value> {
             serde_json::from_value::<ContextRequest>(params).map_err(invalid_params)?,
         )?)
         .map_err(serialize_error)?),
+        "context.query.v1" => Ok(serde_json::to_value(core.context_query(
+            serde_json::from_value::<ContextQueryRequest>(params).map_err(invalid_params)?,
+        )?)
+        .map_err(serialize_error)?),
+        "observation.capture" => Ok(serde_json::to_value(core.observation_capture(
+            serde_json::from_value::<ObservationCaptureInput>(params).map_err(invalid_params)?,
+        )?)
+        .map_err(serialize_error)?),
+        "observation.get" => {
+            let id = required_string_param(&params, "id")?;
+            Ok(serde_json::to_value(core.observation(&id)?).map_err(serialize_error)?)
+        }
+        "candidate.distill" => Ok(serde_json::to_value(core.candidate_distill(
+            serde_json::from_value::<CandidateDistillInput>(params).map_err(invalid_params)?,
+        )?)
+        .map_err(serialize_error)?),
         "memory.upsert" => Ok(serde_json::to_value(core.memory_upsert(
             serde_json::from_value::<MemoryUpsertInput>(params).map_err(invalid_params)?,
         )?)
@@ -388,6 +422,23 @@ pub fn dispatch(core: &Core, method: &str, params: Value) -> CoreResult<Value> {
             serde_json::from_value::<MemoryRetractInput>(params).map_err(invalid_params)?,
         )?)
         .map_err(serialize_error)?),
+        "candidate.propose" => Ok(serde_json::to_value(core.candidate_propose(
+            serde_json::from_value::<CandidateProposeInput>(params).map_err(invalid_params)?,
+        )?)
+        .map_err(serialize_error)?),
+        "candidate.get" => {
+            let id = required_string_param(&params, "id")?;
+            Ok(serde_json::to_value(core.candidate(&id)?).map_err(serialize_error)?)
+        }
+        "candidate.list" => {
+            let state = match params.get("state").cloned() {
+                None | Some(Value::Null) => None,
+                Some(value) => {
+                    Some(serde_json::from_value::<CandidateState>(value).map_err(invalid_params)?)
+                }
+            };
+            Ok(serde_json::to_value(core.candidates(state)).map_err(serialize_error)?)
+        }
         "sources.refresh" => {
             let fixture_path = params
                 .get("fixture_path")
@@ -530,6 +581,18 @@ fn serialize_error(error: serde_json::Error) -> CoreError {
     }
 }
 
+fn required_string_param(params: &Value, field: &str) -> CoreResult<String> {
+    params
+        .get(field)
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| CoreError::InvalidInput {
+            field: field.to_string(),
+            message: "is required".to_string(),
+        })
+}
+
 fn constant_time_equal(left: &str, right: &str) -> bool {
     let mut difference = left.len() ^ right.len();
     for (a, b) in left.bytes().zip(right.bytes()) {
@@ -636,8 +699,13 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_exposes_exactly_six_methods_and_no_unknown_method() {
-        assert_eq!(IPC_METHODS.len(), 6);
+    fn dispatch_preserves_legacy_methods_and_rejects_unknown_method() {
+        assert_eq!(LEGACY_IPC_METHODS.len(), 6);
+        assert!(LEGACY_IPC_METHODS
+            .iter()
+            .all(|method| IPC_METHODS.contains(method)));
+        assert!(IPC_METHODS.contains(&"context.query.v1"));
+        assert!(IPC_METHODS.contains(&"candidate.propose"));
         let core = Core::in_memory().unwrap();
         let error = dispatch(&core, "database.open", Value::Null).expect_err("unknown method");
         assert!(matches!(error, CoreError::InvalidInput { field, .. } if field == "method"));

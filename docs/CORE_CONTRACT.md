@@ -92,9 +92,9 @@ revision, evidence, nested memory idempotency 기록, candidate idempotency 기�
 저장된 결과를 재생하고 다른 payload는 conflict다. `accepted`/`rejected` 후보를
 다시 전이하거나 expected version을 건너뛸 수 없다.
 
-자동화된 transport는 관찰 기록과 candidate propose까지만 사용할 수 있다.
-accept/reject는 Tauri의 trusted review command에서만 호출하며 generic IPC/MCP
-tool 목록에는 포함하지 않는다.
+자동화된 transport는 `observation.capture/get`, `candidate.distill/propose/get/list`
+까지 사용할 수 있다. `accept/reject`는 Tauri의 trusted review command에서만
+호출하며 generic IPC/MCP tool 목록에는 포함하지 않는다.
 
 ### Relation과 WorkContext
 
@@ -179,3 +179,10 @@ SQLite 파일을 직접 열지 않도록 코어 소유 프로세스와 소켓 �
 검증한다. standalone `aidebook-core`는 동일한 lock/socket/token 경계를
 사용하는 owner 선택지이며, CLI/MCP는 어느 경우에도 DB path나 SQL을 받지
 않는다.
+
+기존 여섯 IPC method(`context.search`, `context.get`, `memory.upsert`,
+`memory.retract`, `sources.refresh`, `connections.status`)는 호환성을 위해
+그 의미를 유지한다. `context.query.v1`는 bounded lexical/memory/graph 결과와
+freshness·availability를 묶는 추가 read method다. 관찰·candidate transport는
+제안까지만 자동화할 수 있으며 canonical memory 승격은 generic transport에
+노출하지 않는다.

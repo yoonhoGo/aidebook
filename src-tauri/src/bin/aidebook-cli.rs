@@ -64,12 +64,32 @@ fn run_cli(args: &[String]) -> Result<Value, CoreError> {
             "source_id": flag_value(args, "--source-id"),
             "max_age_seconds": flag_value(args, "--max-age-seconds").map(|value| value.parse::<i64>()).transpose().map_err(|_| CoreError::InvalidInput { field: "--max-age-seconds".to_string(), message: "must be an integer".to_string() })?
         }),
+        "context.query.v1" => json!({
+            "query": required_flag(args, "--query")?,
+            "source_id": flag_value(args, "--source-id"),
+            "provider": flag_value(args, "--provider"),
+            "kind": flag_value(args, "--kind"),
+            "max_age_seconds": flag_value(args, "--max-age-seconds").map(|value| value.parse::<i64>()).transpose().map_err(|_| CoreError::InvalidInput { field: "--max-age-seconds".to_string(), message: "must be an integer".to_string() })?,
+            "max_depth": flag_value(args, "--max-depth").map(|value| value.parse::<usize>()).transpose().map_err(|_| CoreError::InvalidInput { field: "--max-depth".to_string(), message: "must be an integer".to_string() })?,
+            "max_nodes": flag_value(args, "--max-nodes").map(|value| value.parse::<usize>()).transpose().map_err(|_| CoreError::InvalidInput { field: "--max-nodes".to_string(), message: "must be an integer".to_string() })?,
+            "max_edges": flag_value(args, "--max-edges").map(|value| value.parse::<usize>()).transpose().map_err(|_| CoreError::InvalidInput { field: "--max-edges".to_string(), message: "must be an integer".to_string() })?,
+            "max_sources": flag_value(args, "--max-sources").map(|value| value.parse::<usize>()).transpose().map_err(|_| CoreError::InvalidInput { field: "--max-sources".to_string(), message: "must be an integer".to_string() })?,
+            "max_memories": flag_value(args, "--max-memories").map(|value| value.parse::<usize>()).transpose().map_err(|_| CoreError::InvalidInput { field: "--max-memories".to_string(), message: "must be an integer".to_string() })?
+        }),
         "sources.refresh" => json!({"fixture_path": required_flag(args, "--fixture")?}),
         "connections.status" => json!({"connection_id": required_flag(args, "--connection-id")?}),
-        "memory.upsert" | "memory.retract" => {
+        "observation.get" | "candidate.get" => {
+            json!({"id": required_flag(args, "--id")?})
+        }
+        "candidate.list" => json!({"state": flag_value(args, "--state")}),
+        "memory.upsert"
+        | "memory.retract"
+        | "observation.capture"
+        | "candidate.distill"
+        | "candidate.propose" => {
             return Err(CoreError::InvalidInput {
                 field: "--params".to_string(),
-                message: "memory mutations require a JSON --params object so evidence and version guards are explicit".to_string(),
+                message: "mutations require a JSON --params object so evidence and version guards are explicit".to_string(),
             })
         }
         _ => Value::Null,
@@ -83,19 +103,34 @@ fn method_from_command(args: &[String]) -> Result<String, CoreError> {
             Some("context") => match args.get(1).map(String::as_str) {
                 Some("search") => "context.search",
                 Some("get") => "context.get",
-                _ => return Err(usage("context search|get")),
+                Some("query") => "context.query.v1",
+                _ => return Err(usage("context search|get|query")),
             },
             Some("memory") => match args.get(1).map(String::as_str) {
                 Some("upsert") => "memory.upsert",
                 Some("retract") => "memory.retract",
                 _ => return Err(usage("memory upsert|retract")),
             },
+            Some("candidate") if args.get(1).is_some_and(|arg| arg == "propose") => {
+                "candidate.propose"
+            }
+            Some("observation") => match args.get(1).map(String::as_str) {
+                Some("capture") => "observation.capture",
+                Some("get") => "observation.get",
+                _ => return Err(usage("observation capture|get")),
+            },
+            Some("candidate") => match args.get(1).map(String::as_str) {
+                Some("distill") => "candidate.distill",
+                Some("get") => "candidate.get",
+                Some("list") => "candidate.list",
+                _ => return Err(usage("candidate distill|get|list|propose")),
+            },
             Some("sources") if args.get(1).is_some_and(|arg| arg == "refresh") => "sources.refresh",
             Some("connections") if args.get(1).is_some_and(|arg| arg == "status") => {
                 "connections.status"
             }
             _ => return Err(usage(
-                "context search|get, memory upsert|retract, sources refresh, or connections status",
+                "context search|get|query, memory upsert|retract, observation capture|get, candidate distill|get|list|propose, sources refresh, or connections status",
             )),
         };
     Ok(method.to_string())

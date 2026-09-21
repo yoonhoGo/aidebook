@@ -490,6 +490,113 @@ pub struct ContextResponse {
     pub missing_providers: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ContextQueryRequest {
+    pub query: String,
+    #[serde(default)]
+    pub source_id: Option<String>,
+    #[serde(default)]
+    pub source: Option<SourceRef>,
+    #[serde(default)]
+    pub provider: Option<String>,
+    #[serde(default)]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub max_age_seconds: Option<i64>,
+    #[serde(default)]
+    pub max_depth: Option<usize>,
+    #[serde(default)]
+    pub max_nodes: Option<usize>,
+    #[serde(default)]
+    pub max_edges: Option<usize>,
+    #[serde(default)]
+    pub max_sources: Option<usize>,
+    #[serde(default)]
+    pub max_memories: Option<usize>,
+}
+
+impl ContextQueryRequest {
+    pub fn validate(&self) -> CoreResult<()> {
+        if self.query.chars().count() > 500 {
+            return Err(CoreError::InvalidInput {
+                field: "query".to_string(),
+                message: "must not exceed 500 characters".to_string(),
+            });
+        }
+        if self
+            .provider
+            .as_deref()
+            .is_some_and(|value| value.trim().is_empty())
+        {
+            return Err(CoreError::InvalidInput {
+                field: "provider".to_string(),
+                message: "must not be empty when supplied".to_string(),
+            });
+        }
+        if self
+            .kind
+            .as_deref()
+            .is_some_and(|value| value.trim().is_empty())
+        {
+            return Err(CoreError::InvalidInput {
+                field: "kind".to_string(),
+                message: "must not be empty when supplied".to_string(),
+            });
+        }
+        if self.max_age_seconds.is_some_and(|age| age < 0) {
+            return Err(CoreError::InvalidInput {
+                field: "max_age_seconds".to_string(),
+                message: "must not be negative".to_string(),
+            });
+        }
+        for (field, value, maximum) in [
+            ("max_depth", self.max_depth, 8),
+            ("max_nodes", self.max_nodes, 200),
+            ("max_edges", self.max_edges, 400),
+            ("max_sources", self.max_sources, 50),
+            ("max_memories", self.max_memories, 100),
+        ] {
+            if value == Some(0) {
+                return Err(CoreError::InvalidInput {
+                    field: field.to_string(),
+                    message: "must be greater than zero".to_string(),
+                });
+            }
+            if value.is_some_and(|value| value > maximum) {
+                return Err(CoreError::InvalidInput {
+                    field: field.to_string(),
+                    message: format!("must not exceed {maximum}"),
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContextQueryBounds {
+    pub max_depth: usize,
+    pub max_nodes: usize,
+    pub max_edges: usize,
+    pub max_sources: usize,
+    pub max_memories: usize,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ContextQueryResponse {
+    pub api_version: String,
+    pub query: String,
+    pub sources: Vec<SearchResult>,
+    pub memories: Vec<Memory>,
+    pub graph: Option<GraphTraversalResponse>,
+    pub unavailable_sources: Vec<SourceRef>,
+    pub stale_sources: Vec<SourceRef>,
+    pub conflicts: Vec<String>,
+    pub missing_providers: Vec<String>,
+    pub bounds: ContextQueryBounds,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Memory {
     pub id: String,

@@ -45,11 +45,18 @@ The response has exactly one of `result` or `error`:
 {"id":"request-id","error":{"code":"invalid_input","message":"...","details":{}}}
 ```
 
-The six methods are `context.search`, `context.get`, `memory.upsert`,
-`memory.retract`, `sources.refresh`, and `connections.status`. `sources.refresh`
-requires an explicit fixture path when called through the generic IPC transport;
-the Tauri command supplies the selected read-only adapter directly. No method
-accepts a database path or arbitrary SQL.
+The six legacy methods are `context.search`, `context.get`, `memory.upsert`,
+`memory.retract`, `sources.refresh`, and `connections.status`; their request and
+response semantics remain unchanged. The versioned `context.query.v1` read
+method combines bounded lexical, memory, and graph evidence. The review-safe
+observation/candidate methods are `observation.capture`, `observation.get`,
+`candidate.distill`, `candidate.propose`, `candidate.get`, and `candidate.list`.
+They let a local agent capture and propose evidence-backed candidates for a
+human review queue. `candidate.accept` and `candidate.reject` are deliberately
+absent from generic IPC/MCP and are available only through trusted Tauri review
+commands. `sources.refresh` requires an explicit fixture path when called
+through generic IPC; the Tauri command supplies the selected read-only adapter
+directly. No method accepts a database path or arbitrary SQL.
 
 ## CLI and MCP
 
@@ -60,9 +67,12 @@ use `--params` so evidence, idempotency, and expected-version fields stay
 explicit.
 
 `aidebook-cli mcp serve --stdio` implements MCP JSON-RPC initialize,
-`tools/list`, and `tools/call`; the six tool names map one-to-one to the same
-Core methods. MCP tool errors are returned as `isError: true` content and never
-include the token.
+`tools/list`, and `tools/call`; every listed tool maps one-to-one to the same
+Core method. Context queries use `context query --query ...` or a JSON
+`--params` object. Candidate mutations use JSON `--params` so evidence,
+idempotency, and expected-version fields stay explicit. MCP tool errors are
+returned as `isError: true` content and never include the token. Candidate
+acceptance and rejection do not appear in `tools/list`.
 
 The local protocol and fixture client smoke are tested. Actual installed CLI
 launch from a packaged app, a third-party MCP host, native window-close/restart,
