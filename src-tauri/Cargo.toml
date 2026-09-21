@@ -1,5 +1,6 @@
 [package]
 name = "aidebook"
+default-run = "aidebook"
 version = "0.1.0"
 description = "A notebook for your AI assistant."
 authors = ["yoonhoGo"]
