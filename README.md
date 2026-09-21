@@ -61,7 +61,7 @@ explicitly selected read-only Obsidian/GitHub source adapters, and a Core-backed
 memory UI path with explicit localStorage import. The React UI keeps existing
 localStorage data unless the user chooses import; browser fallback saves are
 labelled as demos. Markdown exchange is available from the native settings
-review panel; browser copy/paste remains a fixture/demo boundary. External
+panel at **설정 → 메모리와 그래프**; browser mode disables native operations. External
 writes, remote webhook infrastructure, real account
 smoke, packaged distribution, and native app verification remain staged
 boundaries. CLI/MCP use the authenticated Core owner and never open SQLite.
@@ -73,3 +73,6 @@ See
 [`docs/CORE_CONTRACT.md`](docs/CORE_CONTRACT.md) and
 [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md) for the
 contract and verification boundary.
+
+Memory graph G1–G4 delivery, reproducible Core/CLI checks, and browser-fixture
+versus native validation boundaries: [validation record](docs/MEMORY_GRAPH_VALIDATION.md).

@@ -80,7 +80,7 @@ G3 context review 6개와 M4 IPC/MCP integration 1개, Rust unit 11개가 통과
 CLI/MCP transport와 fixture/in-memory Core는 검증했지만 packaged external MCP
 host, native Tauri window, live provider는 여전히 별도 검증 경계다.
 
-## G4 — Core 교환 구현 완료 · native UI 검증 대기 (Markdown review exchange)
+## G4 — Core 교환·검토 UI 구현 완료 · native UI 검증 대기 (Markdown review exchange)
 
 - `memory_export_markdown`가 canonical memory를 ID 순으로 정렬하고 현재 본문,
   evidence SourceRef/canonical URL/wikilink, revision history를 같은 DB와
@@ -92,10 +92,13 @@ host, native Tauri window, live provider는 여전히 별도 검증 경계다.
   malformed/unknown evidence 입력에서 partial candidate를 남기지 않음
 - Tauri `memory_export_markdown`/`memory_import_markdown` command를 제공하며
   import는 canonical memory 승격이나 외부 vault 쓰기를 수행하지 않음
-- Markdown exchange integration 3개가 deterministic output, edited body,
-  idempotent reimport, atomic malformed rollback을 검증
+- Markdown exchange integration 5개가 deterministic output, edited body,
+  idempotent reimport, fenced heading·후행 공백 보존, unclosed fence·malformed 입력의 atomic rollback을 검증
 
-검토 queue/graph/query/exchange 설정 패널은 기존 UI 스타일과 localStorage를
+설정 → 메모리와 그래프에서 후보 승인·거부/이력, bounded 맥락 검색, 그래프 재빌드,
+Markdown 다운로드·파일 읽기·복사/붙여넣기를 제공한다. 브라우저 fixture로
+승인/거부, version conflict 재시도, 검색·재빌드, 다운로드·붙여넣기를 확인했다.
+파일 선택의 실제 네이티브 동작은 미검증이다. 패널은 기존 UI 스타일과 localStorage를
 보존하는 native/browser 경계를 유지한다. 실제 Tauri window, 외부 vault 파일
 선택, live provider와 WebGL은 이 text-only exchange 구현으로 증명하지 않는다.
 
@@ -208,12 +211,12 @@ Keychain/실계정 provider와 함께 실행하는 native smoke는 아직 검증
 | 명령 | 결과 |
 | --- | --- |
 | `npm run build` | 통과: `tsc` + Vite production build |
-| `cargo test --manifest-path src-tauri/Cargo.toml` | 통과: Rust unit 11개, graph integration 7개, candidate lifecycle/review integration 4개, context review 6개, Markdown exchange 3개, M0 integration 6개, M1 integration 1개, M2 integration 2개, M3 integration 3개, M4 integration 1개, M5 storage 4개, M5 benchmark 1개 |
+| `cargo test --manifest-path src-tauri/Cargo.toml` | 통과: Rust unit 11개, graph integration 7개, candidate lifecycle/review integration 4개, context review 6개, Markdown exchange 5개, M0 integration 6개, M1 integration 1개, M2 integration 2개, M3 integration 3개, M4 integration 1개, M5 storage 4개, M5 benchmark 1개 |
 | `cargo check --manifest-path src-tauri/Cargo.toml` | 통과 |
 | `git diff --check` | 통과 |
 | `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` | 통과 |
 | `cargo test --manifest-path src-tauri/Cargo.toml --test m5_benchmark -- --nocapture` | 통과(2026-09-19 측정): seed=20260919, n=10000, warmup=5, runs=30, p95=24.509ms, macOS aarch64 |
-| `AIDEBOOK_PACKAGE_DIR=/tmp/aidebook-arm64-package scripts/package-arm64.sh` | 통과: arm64 local binaries 3개 staged; 서명/공증/릴리스 미실행 |
+| (2026-09-19) `AIDEBOOK_PACKAGE_DIR=/tmp/aidebook-arm64-package scripts/package-arm64.sh` | 통과: arm64 local binaries 3개 staged; 서명/공증/릴리스 미실행 |
 | staged `aidebook-core` + `aidebook-cli` local smoke (2026-09-19) | 통과: `connections.status` structured stderr, MCP `tools/list` 6개; third-party host/native window 미검증 |
 | debug Core/CLI/MCP review smoke (2026-09-21) | 통과: candidate capture→distill→propose→list, `context.query.v1`, MCP `tools/list` 13개; staged package/third-party host/native window 미검증 |
 
@@ -238,9 +241,15 @@ M5까지 로컬 구현은 완료했지만 위 native/live/release 검증이 남�
 signing/notarization, public release asset/Cask ownership, 실계정·iCloud·native
 window 및 외부 MCP host smoke다.
 
-## jj 기록
+## 이전 MVP 작업의 jj 기록
 
 로드맵 변경 `sqonnulz` 위에 M0 구현 `sxonqxql`/`yptolqwy`, M1 구현
 `mqkpvwql`, M2 구현 `qswsrmtk`, M3 구현 `lqxykmkx`, M4 구현 `svykzmml`,
-M5 구현 `ympmpyot`을 순서대로 기록한다. main 이력·원격·push는 건드리지
-않았다.
+M5 구현 `ympmpyot`을 순서대로 기록했다. 당시 main 이력·원격·push는 건드리지
+않았다. 2026-09-21 G1–G4의 main 병합과 검증은 아래 기록을 따른다.
+
+## G1–G4 전달 기록 (2026-09-21)
+
+로컬 main에 기능별 jj 변경과 독립 검토 수정을 병합했다. 원격 push는 수행하지
+않았으며 기존 Jev 작업은 별도 작업 변경으로 보존했다. 재현 명령·검증 범위와
+변경 ID는 [MEMORY_GRAPH_VALIDATION.md](./MEMORY_GRAPH_VALIDATION.md)에 기록한다.

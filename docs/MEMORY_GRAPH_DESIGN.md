@@ -118,7 +118,7 @@ claim type, provenance, wikilink를 안정된 정렬 순서로 기록한다. 동
 
 import는 Markdown을 parser가 이해할 수 있는 제한된 frontmatter/body 형식으로
 검증하고 candidate `proposed`로만 저장한다. 현재 교환은 파일 경로를 받지 않는
-text-only copy/paste 경계이며, export에 포함된 SourceRef가 현재 Core source와
+text-only 경계이며(UI는 선택 파일 읽기·다운로드·복사/붙여넣기 제공), export에 포함된 SourceRef가 현재 Core source와
 일치하는지 확인한다. import가 canonical memory를 직접 만들거나 외부 vault를
 수정하는 경로는 없다.
 
@@ -134,5 +134,5 @@ Keychain, iCloud hydration을 대신하지 않는다.
 | 그래프 | namespace/path ambiguity, link-only digest, stale/revoked/deleted exclusion, deterministic rebuild, traversal bounds |
 | 후보 | lifecycle transition, invalid transition, evidence/version checks, atomic acceptance, duplicate/conflicting idempotency |
 | context | lexical+memory+graph composition, unavailable/freshness, old six IPC methods |
-| 교환 | deterministic export, safe import under root, no auto promotion/external write |
+| 교환 | deterministic export, bounded text import, fenced body and whitespace roundtrip, no auto promotion/external write |
 | 빌드 | `npm run build`, `cargo test --manifest-path src-tauri/Cargo.toml`, `cargo check --manifest-path src-tauri/Cargo.toml`, `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`, `git diff --check` |
