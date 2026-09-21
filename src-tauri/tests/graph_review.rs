@@ -197,3 +197,60 @@ fn link_only_changes_are_stale_before_rebuild_and_revocation_is_unavailable() {
         "revocation is unavailable, not merely stale"
     );
 }
+
+#[test]
+fn wikilinks_remain_in_namespace_and_ambiguous_paths_are_skipped() {
+    let core = Core::in_memory().unwrap();
+    let mut root = sample("root");
+    root.links.push(SourceLink {
+        target: "target".into(),
+        kind: "wikilink".into(),
+    });
+    let target = sample("target");
+    let mut foreign = target.clone();
+    foreign.source.account_id = "another-vault".into();
+    for item in [&root, &target, &foreign] {
+        core.ingest_snapshot(item.clone()).unwrap();
+    }
+    core.rebuild_graph(GraphRebuildRequest::default()).unwrap();
+    let graph = traverse(&core, &root.source);
+    assert_eq!(graph.edges.len(), 1);
+    assert!(graph.nodes.iter().all(|n| n.source.account_id == "review"));
+    let mut ambiguous = target.clone();
+    ambiguous.source.kind = "document".into();
+    core.ingest_snapshot(ambiguous).unwrap();
+    let build = core.rebuild_graph(GraphRebuildRequest::default()).unwrap();
+    assert!(build.build.ambiguous_links > 0);
+    assert!(traverse(&core, &root.source).edges.is_empty());
+}
+
+#[test]
+fn hop_depth_uses_shortest_path_when_cycles_have_longer_routes() {
+    for case in 0..12 {
+        let core = Core::in_memory().unwrap();
+        let nodes = (0..6)
+            .map(|n| sample(&format!("depth-{case}-{n}")))
+            .collect::<Vec<_>>();
+        for node in &nodes {
+            core.ingest_snapshot(node.clone()).unwrap();
+        }
+        for (from, to) in [(0, 1), (0, 2), (1, 4), (2, 3), (3, 4), (4, 5)] {
+            core.add_relation(RelationInput {
+                from: nodes[from].source.clone(),
+                to: nodes[to].source.clone(),
+                relation_type: "reference".into(),
+                reason: "shortest path fixture".into(),
+            })
+            .unwrap();
+        }
+        core.rebuild_graph(GraphRebuildRequest::default()).unwrap();
+        let result = core
+            .graph_traverse(GraphTraversalRequest {
+                source: Some(nodes[0].source.clone()),
+                max_depth: Some(3),
+                ..Default::default()
+            })
+            .unwrap();
+        assert!(result.nodes.iter().any(|n|n.source.id()==nodes[5].source.id()),"case {case}: node at shortest distance 3 must not be hidden by an earlier longer route");
+    }
+}

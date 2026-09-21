@@ -74,6 +74,28 @@ URL만 갱신된다. 제목이 같다는 이유로 두 자료를 병합하지 �
 - 다음 동기화가 사용자 메모의 본문을 덮어쓰는 경로는 없다. 근거의 접근
   상태만 바뀔 수 있다.
 
+### Observations and candidates
+
+세션에서 얻은 관찰은 `observations`에 `captured`로 기록하고, 정제 작업은
+version guard와 evidence를 확인한 뒤 하나의 `memory_candidates` 행을
+`distilled`로 만든다. 제안은 `proposed`로만 전이할 수 있고, 사람 검토는
+`accepted` 또는 `rejected`로 종료한다. 상태 전이는 다음 순서만 허용한다.
+
+```text
+captured -> distilled -> proposed -> accepted/rejected
+```
+
+후보 승인은 기존 `memories`, `memory_evidence`, `memory_revisions`를
+재사용하는 하나의 SQLite transaction이다. candidate 상태, canonical memory,
+revision, evidence, nested memory idempotency 기록, candidate idempotency 기록
+중 어느 하나라도 실패하면 모두 rollback된다. 같은 idempotency key와 payload는
+저장된 결과를 재생하고 다른 payload는 conflict다. `accepted`/`rejected` 후보를
+다시 전이하거나 expected version을 건너뛸 수 없다.
+
+자동화된 transport는 관찰 기록과 candidate propose까지만 사용할 수 있다.
+accept/reject는 Tauri의 trusted review command에서만 호출하며 generic IPC/MCP
+tool 목록에는 포함하지 않는다.
+
 ### Relation과 WorkContext
 
 Relation은 명시적인 SourceRef 사이의 링크와 이유만 저장한다. M0의
@@ -127,6 +149,7 @@ transaction에서 적용한다.
 - v5: derived `graph_builds`, `graph_nodes`, and `graph_edges` with provenance,
   snapshot/link digests, stale markers, and bounded rebuild metadata
 - v6: graph edge source/target URLs for detecting URL retargets before rebuild
+- v7: persistent observations and review-gated memory candidates
 
 마이그레이션 SQL, version 기록, commit이 하나의 transaction에 들어가므로
 실패하면 해당 version과 새 테이블이 함께 rollback된다. 외래 키를 켜며,

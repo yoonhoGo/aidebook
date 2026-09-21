@@ -309,6 +309,64 @@ impl Core {
     pub fn memory_history(&self, id: &str) -> CoreResult<Vec<MemoryRevision>> {
         self.database.memory_history(id)
     }
+
+    pub fn capture_observation(
+        &self,
+        input: ObservationCaptureInput,
+    ) -> CoreResult<ObservationMutation> {
+        self.database.capture_observation(input)
+    }
+
+    pub fn observation_capture(
+        &self,
+        input: ObservationCaptureInput,
+    ) -> CoreResult<ObservationMutation> {
+        self.capture_observation(input)
+    }
+
+    pub fn distill_candidate(&self, input: CandidateDistillInput) -> CoreResult<CandidateMutation> {
+        self.database.distill_candidate(input)
+    }
+
+    pub fn candidate_distill(&self, input: CandidateDistillInput) -> CoreResult<CandidateMutation> {
+        self.distill_candidate(input)
+    }
+
+    pub fn propose_candidate(&self, input: CandidateProposeInput) -> CoreResult<CandidateMutation> {
+        self.database.propose_candidate(input)
+    }
+
+    pub fn candidate_propose(&self, input: CandidateProposeInput) -> CoreResult<CandidateMutation> {
+        self.propose_candidate(input)
+    }
+
+    pub fn accept_candidate(&self, input: CandidateAcceptInput) -> CoreResult<CandidateAcceptance> {
+        self.database.accept_candidate(input)
+    }
+
+    pub fn candidate_accept(&self, input: CandidateAcceptInput) -> CoreResult<CandidateAcceptance> {
+        self.accept_candidate(input)
+    }
+
+    pub fn reject_candidate(&self, input: CandidateRejectInput) -> CoreResult<CandidateMutation> {
+        self.database.reject_candidate(input)
+    }
+
+    pub fn candidate_reject(&self, input: CandidateRejectInput) -> CoreResult<CandidateMutation> {
+        self.reject_candidate(input)
+    }
+
+    pub fn observation(&self, id: &str) -> CoreResult<Observation> {
+        self.database.observation(id)
+    }
+
+    pub fn candidate(&self, id: &str) -> CoreResult<MemoryCandidate> {
+        self.database.candidate(id)
+    }
+
+    pub fn candidates(&self, state: Option<CandidateState>) -> CoreResult<Vec<MemoryCandidate>> {
+        self.database.candidates(state)
+    }
 }
 
 fn error_code(error: &CoreError) -> &'static str {

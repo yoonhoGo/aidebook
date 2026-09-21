@@ -1,11 +1,12 @@
 pub mod core;
 
 use core::{
-    ContextRequest, Core, CoreEndpoint, CoreError, CoreServer, CredentialStore, GitHubAdapter,
-    GitHubConfig, HttpGitHubApi, KeychainCredentialStore, MemoryRestoreInput, MemoryRetractInput,
-    MemoryUpsertInput, ObsidianAdapter, ReadOnlyConnector, RelationInput, SearchRequest, Snapshot,
-    SourceRef, SourcesRefreshResult, UiMemoryUpsertInput, VaultChange, VaultConfig,
-    VaultScanResult, VaultWatcher,
+    CandidateAcceptInput, CandidateDistillInput, CandidateProposeInput, CandidateRejectInput,
+    CandidateState, ContextRequest, Core, CoreEndpoint, CoreError, CoreServer, CredentialStore,
+    GitHubAdapter, GitHubConfig, HttpGitHubApi, KeychainCredentialStore, MemoryRestoreInput,
+    MemoryRetractInput, MemoryUpsertInput, ObservationCaptureInput, ObsidianAdapter,
+    ReadOnlyConnector, RelationInput, SearchRequest, Snapshot, SourceRef, SourcesRefreshResult,
+    UiMemoryUpsertInput, VaultChange, VaultConfig, VaultScanResult, VaultWatcher,
 };
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -305,6 +306,57 @@ fn memory_restore(
     state.core.restore_memory(request)
 }
 
+#[tauri::command]
+fn observation_capture(
+    request: ObservationCaptureInput,
+    state: State<'_, AppState>,
+) -> Result<core::ObservationMutation, CoreError> {
+    state.core.observation_capture(request)
+}
+
+#[tauri::command]
+fn candidate_distill(
+    request: CandidateDistillInput,
+    state: State<'_, AppState>,
+) -> Result<core::CandidateMutation, CoreError> {
+    state.core.candidate_distill(request)
+}
+
+#[tauri::command]
+fn candidate_propose(
+    request: CandidateProposeInput,
+    state: State<'_, AppState>,
+) -> Result<core::CandidateMutation, CoreError> {
+    state.core.candidate_propose(request)
+}
+
+/// Human review boundary. This command is intentionally not part of the
+/// authenticated generic IPC/MCP method list, so an agent cannot auto-accept
+/// a candidate without an explicit trusted UI action.
+#[tauri::command]
+fn candidate_accept(
+    request: CandidateAcceptInput,
+    state: State<'_, AppState>,
+) -> Result<core::CandidateAcceptance, CoreError> {
+    state.core.candidate_accept(request)
+}
+
+#[tauri::command]
+fn candidate_reject(
+    request: CandidateRejectInput,
+    state: State<'_, AppState>,
+) -> Result<core::CandidateMutation, CoreError> {
+    state.core.candidate_reject(request)
+}
+
+#[tauri::command]
+fn candidate_list(
+    state_filter: Option<CandidateState>,
+    state: State<'_, AppState>,
+) -> Result<Vec<core::MemoryCandidate>, CoreError> {
+    state.core.candidates(state_filter)
+}
+
 fn ensure_ui_evidence(core: &Core, evidence: &[SourceRef]) -> Result<(), CoreError> {
     for source in evidence {
         match core.snapshot(source) {
@@ -422,6 +474,12 @@ pub fn run() {
             memory_upsert,
             memory_retract,
             memory_restore,
+            observation_capture,
+            candidate_distill,
+            candidate_propose,
+            candidate_accept,
+            candidate_reject,
+            candidate_list,
             ui_memory_upsert,
             ui_memory_retract,
             ui_memory_restore,

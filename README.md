@@ -18,7 +18,9 @@ user-reviewable in-app memories.
   boundaries, and M4 adds an authenticated local Core IPC owner plus CLI/MCP
   transports. G1 adds a separately rebuilt SQLite document graph with
   provenance, snapshot/link freshness digests, and bounded traversal; it does
-  not alter canonical user relations.
+  not alter canonical user relations. G2 adds persistent observations and a
+  human-review candidate queue; only an explicit Tauri review command can
+  promote a candidate into canonical memory.
 
 The first UI slice mirrors the planned focus: work contexts on the left,
 memory and activity in the centre, and source evidence on the right. Work

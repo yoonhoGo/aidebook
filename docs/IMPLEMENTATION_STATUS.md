@@ -6,7 +6,7 @@
 ## M0 — 완료
 
 - Rust `Core` 공통 모델/API와 구조화 `CoreError` 추가
-- SQLite transaction 마이그레이션(v1–v6), 외래 키, bundled FTS5 snapshot 검색
+- SQLite transaction 마이그레이션(v1–v7), 외래 키, bundled FTS5 snapshot 검색
 - source identity 중복 제거, provider/account namespace, 기간·종류 필터
 - 접근 상태와 freshness, 마지막 정상 snapshot을 보존하는 실패 기록, 연결별 SyncState
 - 메모 근거·저장 이유·작성 주체·claim type 검증
@@ -29,13 +29,35 @@
   제거를 제공
 - `cache_clear`가 snapshot/FTS와 파생 graph build를 함께 지우며 source와
   canonical memory/evidence는 보존
-- graph review integration 5개와 v4 backup을 staged copy에서만 최신 schema로
+- graph review integration 7개와 v4 backup을 staged copy에서만 최신 schema로
   migrate하는 restore regression을 통과
 
 G1은 완전한 Tree-sitter/코드 심볼 parser, 모델 기반 inferred edge, native
 Tauri/WebGL 그래프 화면을 포함하지 않는다. fixture/in-memory에서 확인한
 freshness와 접근 상태는 실제 provider, iCloud/FSEvents, native window 검증을
 대신하지 않는다.
+
+## G2 — 구현 완료 · native UI 검증 대기 (관찰·메모리 후보 review gate)
+
+- migration v7로 `observations`와 `memory_candidates`를 추가하고
+  `captured → distilled → proposed → accepted/rejected` 상태와 version,
+  evidence, actor/author, reason, claim type, idempotency digest를 보존
+- `observation_capture`, `candidate_distill`, `candidate_propose`,
+  `candidate_accept`, `candidate_reject`, 조회/list Core API와 Tauri review
+  commands를 추가
+- accepted 승격은 기존 memories/memory_revisions/memory_evidence를 재사용하는
+  단일 SQLite transaction으로 실행하며, candidate 상태·canonical memory·두
+  idempotency 기록이 함께 commit되거나 함께 rollback됨
+- expected version과 상태 전이, credential marker, evidence source를 검증하고
+  중복/충돌 idempotency 요청을 재생 또는 거부; rejected candidate는 canonical
+  memory를 만들지 않음
+- acceptance는 generic IPC/MCP tool에 노출하지 않고 trusted Tauri review
+  command 경계에 둔다. observation/candidate propose transport는 다음 G3에서
+  read/propose 용도로 연결한다.
+
+G2의 candidate 결과는 로컬 fixture/in-memory Core에서 검증했으며 자동화된
+agent가 acceptance를 호출하는 경로를 제공하지 않는다. native Tauri review
+화면과 live provider evidence는 G4 및 별도 native/live 검증 경계다.
 
 ## M1 — 구현 완료 · native 검증 대기 (선택된 Obsidian vault)
 
@@ -141,7 +163,7 @@ Keychain/실계정 provider와 함께 실행하는 native smoke는 아직 검증
 | 명령 | 결과 |
 | --- | --- |
 | `npm run build` | 통과: `tsc` + Vite production build |
-| `cargo test --manifest-path src-tauri/Cargo.toml` | 통과: Rust unit 11개, graph integration 5개, M0 integration 6개, M1 integration 1개, M2 integration 2개, M3 integration 3개, M4 integration 1개, M5 storage 4개, M5 benchmark 1개 |
+| `cargo test --manifest-path src-tauri/Cargo.toml` | 통과: Rust unit 11개, graph integration 7개, candidate lifecycle/review integration 4개, M0 integration 6개, M1 integration 1개, M2 integration 2개, M3 integration 3개, M4 integration 1개, M5 storage 4개, M5 benchmark 1개 |
 | `cargo check --manifest-path src-tauri/Cargo.toml` | 통과 |
 | `git diff --check` | 통과 |
 | `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` | 통과 |

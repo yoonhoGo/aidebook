@@ -560,6 +560,144 @@ pub struct MemoryMutation {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CandidateState {
+    Captured,
+    Distilled,
+    Proposed,
+    Accepted,
+    Rejected,
+}
+
+impl CandidateState {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Captured => "captured",
+            Self::Distilled => "distilled",
+            Self::Proposed => "proposed",
+            Self::Accepted => "accepted",
+            Self::Rejected => "rejected",
+        }
+    }
+
+    pub fn from_str(value: &str) -> CoreResult<Self> {
+        match value {
+            "captured" => Ok(Self::Captured),
+            "distilled" => Ok(Self::Distilled),
+            "proposed" => Ok(Self::Proposed),
+            "accepted" => Ok(Self::Accepted),
+            "rejected" => Ok(Self::Rejected),
+            other => Err(CoreError::Database {
+                message: format!("unknown candidate state '{other}'"),
+            }),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Observation {
+    pub id: String,
+    pub session_id: String,
+    pub body: String,
+    pub evidence: Vec<SourceRef>,
+    pub actor: String,
+    pub state: CandidateState,
+    pub version: i64,
+    pub idempotency_key: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ObservationCaptureInput {
+    #[serde(default)]
+    pub id: Option<String>,
+    pub session_id: String,
+    pub body: String,
+    pub evidence: Vec<SourceRef>,
+    pub actor: String,
+    pub idempotency_key: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ObservationMutation {
+    pub observation: Observation,
+    pub idempotent_replay: bool,
+    pub action: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CandidateDistillInput {
+    pub observation_id: String,
+    pub body: String,
+    pub reason: String,
+    pub author: String,
+    pub claim_type: String,
+    pub idempotency_key: String,
+    #[serde(default)]
+    pub expected_version: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CandidateProposeInput {
+    pub id: String,
+    pub expected_version: i64,
+    pub idempotency_key: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CandidateAcceptInput {
+    pub id: String,
+    pub expected_version: i64,
+    pub idempotency_key: String,
+    #[serde(default)]
+    pub memory_id: Option<String>,
+    #[serde(default)]
+    pub expected_memory_version: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CandidateRejectInput {
+    pub id: String,
+    pub expected_version: i64,
+    pub idempotency_key: String,
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemoryCandidate {
+    pub id: String,
+    pub observation_id: String,
+    pub body: String,
+    pub reason: String,
+    pub evidence: Vec<SourceRef>,
+    pub author: String,
+    pub claim_type: String,
+    pub state: CandidateState,
+    pub version: i64,
+    pub idempotency_key: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub accepted_memory_id: Option<String>,
+    pub rejection_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CandidateMutation {
+    pub candidate: MemoryCandidate,
+    pub idempotent_replay: bool,
+    pub action: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CandidateAcceptance {
+    pub candidate: MemoryCandidate,
+    pub memory: Memory,
+    pub idempotent_replay: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UiMemory {
     pub id: String,
     pub title: String,

@@ -9,7 +9,7 @@ use chrono::Utc;
 use rusqlite::types::Value;
 use rusqlite::{params, params_from_iter, Connection, OpenFlags, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::ops::Deref;
 use std::path::Path;
 use std::sync::Mutex;
@@ -212,6 +212,49 @@ const MIGRATIONS: &[(i64, &str)] = &[
         r#"
         ALTER TABLE graph_edges ADD COLUMN source_url TEXT NOT NULL DEFAULT '';
         ALTER TABLE graph_edges ADD COLUMN target_url TEXT;
+        "#,
+    ),
+    (
+        7,
+        r#"
+        CREATE TABLE IF NOT EXISTS observations (
+            id TEXT PRIMARY KEY NOT NULL,
+            session_id TEXT NOT NULL,
+            body TEXT NOT NULL,
+            evidence_json TEXT NOT NULL,
+            actor TEXT NOT NULL,
+            state TEXT NOT NULL DEFAULT 'captured'
+                CHECK (state IN ('captured', 'distilled')),
+            version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+            idempotency_key TEXT NOT NULL,
+            idempotency_digest TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS memory_candidates (
+            id TEXT PRIMARY KEY NOT NULL,
+            observation_id TEXT NOT NULL UNIQUE REFERENCES observations(id) ON DELETE CASCADE,
+            body TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            evidence_json TEXT NOT NULL,
+            author TEXT NOT NULL,
+            claim_type TEXT NOT NULL,
+            state TEXT NOT NULL DEFAULT 'distilled'
+                CHECK (state IN ('distilled', 'proposed', 'accepted', 'rejected')),
+            version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+            idempotency_key TEXT NOT NULL,
+            idempotency_digest TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            accepted_memory_id TEXT REFERENCES memories(id) ON DELETE SET NULL,
+            rejection_reason TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_observations_state_updated
+            ON observations(state, updated_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_memory_candidates_state_updated
+            ON memory_candidates(state, updated_at DESC);
         "#,
     ),
 ];
@@ -795,6 +838,401 @@ impl Database {
         })
     }
 
+    pub fn capture_observation(
+        &self,
+        input: ObservationCaptureInput,
+    ) -> CoreResult<ObservationMutation> {
+        validate_observation_capture(&input)?;
+        let digest = request_digest(&input)?;
+        let mut connection = self.lock()?;
+        let transaction = connection.transaction().map_err(database_error)?;
+        if let Some(replay) = check_idempotency::<ObservationMutation>(
+            &transaction,
+            &input.idempotency_key,
+            "observation.capture",
+            &digest,
+        )? {
+            transaction.commit().map_err(database_error)?;
+            return Ok(replay);
+        }
+        let id = input
+            .id
+            .clone()
+            .unwrap_or_else(|| format!("obs_{}", Uuid::new_v4()));
+        let already_exists = transaction
+            .query_row(
+                "SELECT 1 FROM observations WHERE id = ?1",
+                params![id],
+                |_| Ok(()),
+            )
+            .optional()
+            .map_err(database_error)?
+            .is_some();
+        if already_exists {
+            return Err(CoreError::InvalidInput {
+                field: "id".to_string(),
+                message: "an observation with this id already exists".to_string(),
+            });
+        }
+        let evidence_json =
+            serde_json::to_string(&input.evidence).map_err(|error| CoreError::Database {
+                message: error.to_string(),
+            })?;
+        let now = now_rfc3339();
+        transaction
+            .execute(
+                "INSERT INTO observations
+                    (id, session_id, body, evidence_json, actor, state, version,
+                     idempotency_key, idempotency_digest, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, 'captured', 1, ?6, ?7, ?8, ?8)",
+                params![
+                    id,
+                    input.session_id,
+                    input.body,
+                    evidence_json,
+                    input.actor,
+                    input.idempotency_key,
+                    digest,
+                    now,
+                ],
+            )
+            .map_err(database_error)?;
+        let observation = load_observation(&transaction, &id)?;
+        let mutation = ObservationMutation {
+            observation,
+            idempotent_replay: false,
+            action: "captured".to_string(),
+        };
+        store_idempotency(
+            &transaction,
+            &input.idempotency_key,
+            "observation.capture",
+            &digest,
+            &mutation,
+        )?;
+        transaction.commit().map_err(database_error)?;
+        Ok(mutation)
+    }
+
+    pub fn distill_candidate(&self, input: CandidateDistillInput) -> CoreResult<CandidateMutation> {
+        validate_candidate_distill(&input)?;
+        let digest = request_digest(&input)?;
+        let mut connection = self.lock()?;
+        let transaction = connection.transaction().map_err(database_error)?;
+        if let Some(replay) = check_idempotency::<CandidateMutation>(
+            &transaction,
+            &input.idempotency_key,
+            "candidate.distill",
+            &digest,
+        )? {
+            transaction.commit().map_err(database_error)?;
+            return Ok(replay);
+        }
+        let observation = load_observation(&transaction, &input.observation_id)?;
+        let expected = input.expected_version.unwrap_or(observation.version);
+        if observation.version != expected {
+            return Err(CoreError::VersionConflict {
+                entity: "observation".to_string(),
+                id: observation.id.clone(),
+                expected,
+                actual: observation.version,
+            });
+        }
+        if observation.state != CandidateState::Captured {
+            return Err(CoreError::InvalidInput {
+                field: "observation_id".to_string(),
+                message: "only a captured observation can be distilled".to_string(),
+            });
+        }
+        let existing_candidate = transaction
+            .query_row(
+                "SELECT id FROM memory_candidates WHERE observation_id = ?1",
+                params![observation.id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(database_error)?;
+        if let Some(id) = existing_candidate {
+            return Err(CoreError::InvalidInput {
+                field: "observation_id".to_string(),
+                message: format!("observation already has candidate '{id}'"),
+            });
+        }
+        let evidence_ids = source_ids_for_memory(&transaction, &observation.evidence)?;
+        let evidence_json =
+            serde_json::to_string(&observation.evidence).map_err(|error| CoreError::Database {
+                message: error.to_string(),
+            })?;
+        let candidate_id = format!("cand_{}", Uuid::new_v4());
+        let now = now_rfc3339();
+        transaction
+            .execute(
+                "INSERT INTO memory_candidates
+                    (id, observation_id, body, reason, evidence_json, author, claim_type,
+                     state, version, idempotency_key, idempotency_digest, created_at,
+                     updated_at, accepted_memory_id, rejection_reason)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'distilled', 1, ?8, ?9, ?10, ?10, NULL, NULL)",
+                params![
+                    candidate_id,
+                    observation.id,
+                    input.body,
+                    input.reason,
+                    evidence_json,
+                    input.author,
+                    input.claim_type,
+                    input.idempotency_key,
+                    digest,
+                    now,
+                ],
+            )
+            .map_err(database_error)?;
+        transaction
+            .execute(
+                "UPDATE observations SET state = 'distilled', version = version + 1,
+                    idempotency_key = ?1, idempotency_digest = ?2, updated_at = ?3
+                 WHERE id = ?4",
+                params![input.idempotency_key, digest, now, observation.id],
+            )
+            .map_err(database_error)?;
+        let _ = evidence_ids;
+        let candidate = load_candidate(&transaction, &candidate_id)?;
+        let mutation = CandidateMutation {
+            candidate,
+            idempotent_replay: false,
+            action: "distilled".to_string(),
+        };
+        store_idempotency(
+            &transaction,
+            &input.idempotency_key,
+            "candidate.distill",
+            &digest,
+            &mutation,
+        )?;
+        transaction.commit().map_err(database_error)?;
+        Ok(mutation)
+    }
+
+    pub fn propose_candidate(&self, input: CandidateProposeInput) -> CoreResult<CandidateMutation> {
+        validate_candidate_transition(&input.id, input.expected_version, &input.idempotency_key)?;
+        let digest = request_digest(&input)?;
+        let mut connection = self.lock()?;
+        let transaction = connection.transaction().map_err(database_error)?;
+        if let Some(replay) = check_idempotency::<CandidateMutation>(
+            &transaction,
+            &input.idempotency_key,
+            "candidate.propose",
+            &digest,
+        )? {
+            transaction.commit().map_err(database_error)?;
+            return Ok(replay);
+        }
+        let candidate = load_candidate(&transaction, &input.id)?;
+        check_candidate_version(&candidate, input.expected_version)?;
+        if candidate.state != CandidateState::Distilled {
+            return Err(CoreError::InvalidInput {
+                field: "id".to_string(),
+                message: "only a distilled candidate can be proposed".to_string(),
+            });
+        }
+        let now = now_rfc3339();
+        transaction
+            .execute(
+                "UPDATE memory_candidates SET state = 'proposed', version = version + 1,
+                    idempotency_key = ?1, idempotency_digest = ?2, updated_at = ?3
+                 WHERE id = ?4",
+                params![input.idempotency_key, digest, now, input.id],
+            )
+            .map_err(database_error)?;
+        let candidate = load_candidate(&transaction, &input.id)?;
+        let mutation = CandidateMutation {
+            candidate,
+            idempotent_replay: false,
+            action: "proposed".to_string(),
+        };
+        store_idempotency(
+            &transaction,
+            &input.idempotency_key,
+            "candidate.propose",
+            &digest,
+            &mutation,
+        )?;
+        transaction.commit().map_err(database_error)?;
+        Ok(mutation)
+    }
+
+    pub fn accept_candidate(&self, input: CandidateAcceptInput) -> CoreResult<CandidateAcceptance> {
+        validate_candidate_transition(&input.id, input.expected_version, &input.idempotency_key)?;
+        let digest = request_digest(&input)?;
+        let mut connection = self.lock()?;
+        let transaction = connection.transaction().map_err(database_error)?;
+        if let Some(replay) = check_idempotency::<CandidateAcceptance>(
+            &transaction,
+            &input.idempotency_key,
+            "candidate.accept",
+            &digest,
+        )? {
+            transaction.commit().map_err(database_error)?;
+            return Ok(replay);
+        }
+        let candidate = load_candidate(&transaction, &input.id)?;
+        check_candidate_version(&candidate, input.expected_version)?;
+        if candidate.state != CandidateState::Proposed {
+            return Err(CoreError::InvalidInput {
+                field: "id".to_string(),
+                message: "only a proposed candidate can be accepted".to_string(),
+            });
+        }
+        let evidence_ids = source_ids_for_memory(&transaction, &candidate.evidence)?;
+        let memory_input = MemoryUpsertInput {
+            id: input.memory_id,
+            body: candidate.body.clone(),
+            reason: candidate.reason.clone(),
+            evidence: candidate.evidence.clone(),
+            author: candidate.author.clone(),
+            claim_type: candidate.claim_type.clone(),
+            idempotency_key: format!("candidate:{}:{}", candidate.id, input.idempotency_key),
+            expected_version: input.expected_memory_version,
+            supersedes_id: None,
+        };
+        let memory = Self::upsert_memory_in_transaction(&transaction, memory_input)?;
+        let now = now_rfc3339();
+        transaction
+            .execute(
+                "UPDATE memory_candidates SET state = 'accepted', version = version + 1,
+                    idempotency_key = ?1, idempotency_digest = ?2, updated_at = ?3,
+                    accepted_memory_id = ?4, rejection_reason = NULL
+                 WHERE id = ?5",
+                params![
+                    input.idempotency_key,
+                    digest,
+                    now,
+                    memory.memory.id,
+                    input.id,
+                ],
+            )
+            .map_err(database_error)?;
+        let _ = evidence_ids;
+        let candidate = load_candidate(&transaction, &input.id)?;
+        let acceptance = CandidateAcceptance {
+            candidate,
+            memory: memory.memory,
+            idempotent_replay: false,
+        };
+        store_idempotency(
+            &transaction,
+            &input.idempotency_key,
+            "candidate.accept",
+            &digest,
+            &acceptance,
+        )?;
+        transaction.commit().map_err(database_error)?;
+        Ok(acceptance)
+    }
+
+    pub fn reject_candidate(&self, input: CandidateRejectInput) -> CoreResult<CandidateMutation> {
+        validate_candidate_transition(&input.id, input.expected_version, &input.idempotency_key)?;
+        if input
+            .reason
+            .as_deref()
+            .is_some_and(|reason| reason.trim().is_empty())
+        {
+            return Err(CoreError::InvalidInput {
+                field: "reason".to_string(),
+                message: "must not be empty when supplied".to_string(),
+            });
+        }
+        let digest = request_digest(&input)?;
+        let mut connection = self.lock()?;
+        let transaction = connection.transaction().map_err(database_error)?;
+        if let Some(replay) = check_idempotency::<CandidateMutation>(
+            &transaction,
+            &input.idempotency_key,
+            "candidate.reject",
+            &digest,
+        )? {
+            transaction.commit().map_err(database_error)?;
+            return Ok(replay);
+        }
+        let candidate = load_candidate(&transaction, &input.id)?;
+        check_candidate_version(&candidate, input.expected_version)?;
+        if candidate.state != CandidateState::Proposed {
+            return Err(CoreError::InvalidInput {
+                field: "id".to_string(),
+                message: "only a proposed candidate can be rejected".to_string(),
+            });
+        }
+        let now = now_rfc3339();
+        let reason = input
+            .reason
+            .unwrap_or_else(|| "rejected during review".to_string());
+        transaction
+            .execute(
+                "UPDATE memory_candidates SET state = 'rejected', version = version + 1,
+                    idempotency_key = ?1, idempotency_digest = ?2, updated_at = ?3,
+                    rejection_reason = ?4 WHERE id = ?5",
+                params![input.idempotency_key, digest, now, reason, input.id],
+            )
+            .map_err(database_error)?;
+        let candidate = load_candidate(&transaction, &input.id)?;
+        let mutation = CandidateMutation {
+            candidate,
+            idempotent_replay: false,
+            action: "rejected".to_string(),
+        };
+        store_idempotency(
+            &transaction,
+            &input.idempotency_key,
+            "candidate.reject",
+            &digest,
+            &mutation,
+        )?;
+        transaction.commit().map_err(database_error)?;
+        Ok(mutation)
+    }
+
+    pub fn observation(&self, id: &str) -> CoreResult<Observation> {
+        let connection = self.lock()?;
+        load_observation(&connection, id)
+    }
+
+    pub fn candidate(&self, id: &str) -> CoreResult<MemoryCandidate> {
+        let connection = self.lock()?;
+        load_candidate(&connection, id)
+    }
+
+    pub fn candidates(&self, state: Option<CandidateState>) -> CoreResult<Vec<MemoryCandidate>> {
+        let connection = self.lock()?;
+        let mut statement = if state.is_some() {
+            connection
+                .prepare(
+                    "SELECT id FROM memory_candidates WHERE state = ?1
+                     ORDER BY updated_at DESC, id",
+                )
+                .map_err(database_error)?
+        } else {
+            connection
+                .prepare("SELECT id FROM memory_candidates ORDER BY updated_at DESC, id")
+                .map_err(database_error)?
+        };
+        let ids = if let Some(state) = state {
+            statement
+                .query_map(params![state.as_str()], |row| row.get::<_, String>(0))
+                .map_err(database_error)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(database_error)?
+        } else {
+            statement
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(database_error)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(database_error)?
+        };
+        drop(statement);
+        ids.into_iter()
+            .map(|id| load_candidate(&connection, &id))
+            .collect()
+    }
+
     /// Rebuilds the derived document graph from the current snapshot cache.
     /// The graph is deliberately a separate projection: explicit relations
     /// remain canonical, while extracted links are rebuilt from snapshot
@@ -1238,9 +1676,9 @@ impl Database {
         let mut diagnostics = Vec::new();
         let mut visited = HashSet::new();
         let mut seen_edges = HashSet::new();
-        let mut frontier = vec![(root_id.clone(), 0usize)];
+        let mut frontier = VecDeque::from([(root_id.clone(), 0usize)]);
         let mut truncated = false;
-        while let Some((current_id, depth)) = frontier.pop() {
+        while let Some((current_id, depth)) = frontier.pop_front() {
             if !visited.insert(current_id.clone()) {
                 continue;
             }
@@ -1347,7 +1785,7 @@ impl Database {
                         truncated = true;
                         break;
                     }
-                    frontier.push((neighbor_id.clone(), depth + 1));
+                    frontier.push_back((neighbor_id.clone(), depth + 1));
                 }
                 let neighbor_edge_hash = if row.from_source_id == current_id {
                     row.target_hash.as_deref().unwrap_or_default()
@@ -1400,21 +1838,30 @@ impl Database {
 
     pub fn upsert_memory(&self, input: MemoryUpsertInput) -> CoreResult<MemoryMutation> {
         validate_memory_input(&input)?;
-        let digest = request_digest(&input)?;
         let mut connection = self.lock()?;
         let transaction = connection.transaction().map_err(database_error)?;
+        let mutation = Self::upsert_memory_in_transaction(&transaction, input)?;
+        transaction.commit().map_err(database_error)?;
+        Ok(mutation)
+    }
+
+    fn upsert_memory_in_transaction(
+        transaction: &Transaction<'_>,
+        input: MemoryUpsertInput,
+    ) -> CoreResult<MemoryMutation> {
+        validate_memory_input(&input)?;
+        let digest = request_digest(&input)?;
         if let Some(replay) = check_idempotency::<MemoryMutation>(
-            &transaction,
+            transaction,
             &input.idempotency_key,
             "memory.upsert",
             &digest,
         )? {
-            transaction.commit().map_err(database_error)?;
             return Ok(replay);
         }
 
         let (memory_id, created, version, created_at, previous) = if let Some(id) = &input.id {
-            match load_memory(&transaction, id) {
+            match load_memory(transaction, id) {
                 Ok(current) => {
                     let expected =
                         input
@@ -1474,7 +1921,7 @@ impl Database {
             )
         };
 
-        let evidence_ids = source_ids_for_memory(&transaction, &input.evidence)?;
+        let evidence_ids = source_ids_for_memory(transaction, &input.evidence)?;
         let updated_at = now_rfc3339();
         if created {
             transaction
@@ -1520,10 +1967,10 @@ impl Database {
                 )
                 .map_err(database_error)?;
         }
-        replace_memory_evidence(&transaction, &memory_id, &evidence_ids)?;
-        let memory = load_memory(&transaction, &memory_id)?;
+        replace_memory_evidence(transaction, &memory_id, &evidence_ids)?;
+        let memory = load_memory(transaction, &memory_id)?;
         insert_revision(
-            &transaction,
+            transaction,
             &memory,
             if previous.is_some() {
                 "updated"
@@ -1542,13 +1989,12 @@ impl Database {
             },
         };
         store_idempotency(
-            &transaction,
+            transaction,
             &input.idempotency_key,
             "memory.upsert",
             &digest,
             &mutation,
         )?;
-        transaction.commit().map_err(database_error)?;
         Ok(mutation)
     }
 
@@ -2549,6 +2995,109 @@ where
     })
 }
 
+fn load_observation<C>(connection: &C, id: &str) -> CoreResult<Observation>
+where
+    C: Deref<Target = Connection>,
+{
+    let row = connection
+        .query_row(
+            "SELECT session_id, body, evidence_json, actor, state, version,
+                    idempotency_key, created_at, updated_at
+             FROM observations WHERE id = ?1",
+            params![id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, i64>(5)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, String>(7)?,
+                    row.get::<_, String>(8)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(database_error)?
+        .ok_or_else(|| CoreError::NotFound {
+            entity: "observation".to_string(),
+            id: id.to_string(),
+        })?;
+    let evidence = serde_json::from_str(&row.2).map_err(|error| CoreError::Database {
+        message: error.to_string(),
+    })?;
+    Ok(Observation {
+        id: id.to_string(),
+        session_id: row.0,
+        body: row.1,
+        evidence,
+        actor: row.3,
+        state: CandidateState::from_str(&row.4)?,
+        version: row.5,
+        idempotency_key: row.6,
+        created_at: row.7,
+        updated_at: row.8,
+    })
+}
+
+fn load_candidate<C>(connection: &C, id: &str) -> CoreResult<MemoryCandidate>
+where
+    C: Deref<Target = Connection>,
+{
+    let row = connection
+        .query_row(
+            "SELECT observation_id, body, reason, evidence_json, author, claim_type,
+                    state, version, idempotency_key, created_at, updated_at,
+                    accepted_memory_id, rejection_reason
+             FROM memory_candidates WHERE id = ?1",
+            params![id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, i64>(7)?,
+                    row.get::<_, String>(8)?,
+                    row.get::<_, String>(9)?,
+                    row.get::<_, String>(10)?,
+                    row.get::<_, Option<String>>(11)?,
+                    row.get::<_, Option<String>>(12)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(database_error)?
+        .ok_or_else(|| CoreError::NotFound {
+            entity: "memory candidate".to_string(),
+            id: id.to_string(),
+        })?;
+    let evidence = serde_json::from_str(&row.3).map_err(|error| CoreError::Database {
+        message: error.to_string(),
+    })?;
+    Ok(MemoryCandidate {
+        id: id.to_string(),
+        observation_id: row.0,
+        body: row.1,
+        reason: row.2,
+        evidence,
+        author: row.4,
+        claim_type: row.5,
+        state: CandidateState::from_str(&row.6)?,
+        version: row.7,
+        idempotency_key: row.8,
+        created_at: row.9,
+        updated_at: row.10,
+        accepted_memory_id: row.11,
+        rejection_reason: row.12,
+    })
+}
+
 fn source_ids_for_memory(
     transaction: &Transaction<'_>,
     evidence: &[SourceRef],
@@ -2741,6 +3290,128 @@ fn validate_memory_input(input: &MemoryUpsertInput) -> CoreResult<()> {
                 message: "duplicate source references are not allowed".to_string(),
             });
         }
+    }
+    Ok(())
+}
+
+fn validate_observation_capture(input: &ObservationCaptureInput) -> CoreResult<()> {
+    if input.session_id.trim().is_empty() {
+        return Err(CoreError::InvalidInput {
+            field: "session_id".to_string(),
+            message: "must not be empty".to_string(),
+        });
+    }
+    if input.body.trim().is_empty() {
+        return Err(CoreError::InvalidInput {
+            field: "body".to_string(),
+            message: "must not be empty".to_string(),
+        });
+    }
+    if input.actor.trim().is_empty() {
+        return Err(CoreError::InvalidInput {
+            field: "actor".to_string(),
+            message: "must not be empty".to_string(),
+        });
+    }
+    if input.evidence.is_empty() {
+        return Err(CoreError::InvalidInput {
+            field: "evidence".to_string(),
+            message: "at least one source reference is required".to_string(),
+        });
+    }
+    if input.idempotency_key.trim().is_empty() {
+        return Err(CoreError::InvalidInput {
+            field: "idempotency_key".to_string(),
+            message: "must not be empty".to_string(),
+        });
+    }
+    if contains_credential_marker(&input.body) {
+        return Err(CoreError::SensitiveDataRejected);
+    }
+    validate_evidence_references(&input.evidence)
+}
+
+fn validate_candidate_distill(input: &CandidateDistillInput) -> CoreResult<()> {
+    if input.observation_id.trim().is_empty() {
+        return Err(CoreError::InvalidInput {
+            field: "observation_id".to_string(),
+            message: "must not be empty".to_string(),
+        });
+    }
+    if input.body.trim().is_empty() || input.reason.trim().is_empty() {
+        return Err(CoreError::InvalidInput {
+            field: "body/reason".to_string(),
+            message: "both fields are required".to_string(),
+        });
+    }
+    if input.author.trim().is_empty() || input.claim_type.trim().is_empty() {
+        return Err(CoreError::InvalidInput {
+            field: "author/claim_type".to_string(),
+            message: "both fields are required".to_string(),
+        });
+    }
+    if input.idempotency_key.trim().is_empty() {
+        return Err(CoreError::InvalidInput {
+            field: "idempotency_key".to_string(),
+            message: "must not be empty".to_string(),
+        });
+    }
+    if input.expected_version.is_some_and(|version| version < 1) {
+        return Err(CoreError::InvalidInput {
+            field: "expected_version".to_string(),
+            message: "must be greater than zero".to_string(),
+        });
+    }
+    if contains_credential_marker(&input.body) || contains_credential_marker(&input.reason) {
+        return Err(CoreError::SensitiveDataRejected);
+    }
+    Ok(())
+}
+
+fn validate_evidence_references(evidence: &[SourceRef]) -> CoreResult<()> {
+    let mut seen = HashSet::new();
+    for source in evidence {
+        source.validate()?;
+        if !seen.insert(source.id()) {
+            return Err(CoreError::InvalidInput {
+                field: "evidence".to_string(),
+                message: "duplicate source references are not allowed".to_string(),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn validate_candidate_transition(id: &str, expected_version: i64, key: &str) -> CoreResult<()> {
+    if id.trim().is_empty() {
+        return Err(CoreError::InvalidInput {
+            field: "id".to_string(),
+            message: "must not be empty".to_string(),
+        });
+    }
+    if expected_version < 1 {
+        return Err(CoreError::InvalidInput {
+            field: "expected_version".to_string(),
+            message: "must be greater than zero".to_string(),
+        });
+    }
+    if key.trim().is_empty() {
+        return Err(CoreError::InvalidInput {
+            field: "idempotency_key".to_string(),
+            message: "must not be empty".to_string(),
+        });
+    }
+    Ok(())
+}
+
+fn check_candidate_version(candidate: &MemoryCandidate, expected: i64) -> CoreResult<()> {
+    if candidate.version != expected {
+        return Err(CoreError::VersionConflict {
+            entity: "memory candidate".to_string(),
+            id: candidate.id.clone(),
+            expected,
+            actual: candidate.version,
+        });
     }
     Ok(())
 }
