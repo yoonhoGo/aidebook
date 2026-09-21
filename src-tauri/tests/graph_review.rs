@@ -46,6 +46,11 @@ fn url_changes_invalidate_edges_without_changing_body() {
         traverse(&core, &a.source).edges.is_empty(),
         "old URL edge is stale even if body hash matches"
     );
+    assert_eq!(
+        traverse(&core, &a.source).nodes.len(),
+        1,
+        "a stale edge must not enqueue an unrelated target"
+    );
     core.rebuild_graph(GraphRebuildRequest::default()).unwrap();
     assert!(traverse(&core, &a.source).edges.is_empty());
 }
@@ -105,6 +110,12 @@ fn removed_explicit_relation_cannot_survive_a_rebuild_digest_replay() {
     let first = core.rebuild_graph(GraphRebuildRequest::default()).unwrap();
     assert_eq!(traverse(&core, &a.source).edges.len(), 1);
     core.remove_relation(relation).unwrap();
+    let before_rebuild = traverse(&core, &a.source);
+    assert!(
+        before_rebuild.edges.is_empty(),
+        "removed relation must stop traversing immediately"
+    );
+    assert_eq!(before_rebuild.nodes.len(), 1);
     let next = core.rebuild_graph(GraphRebuildRequest::default()).unwrap();
     assert_ne!(first.build.build_id, next.build.build_id);
     assert!(traverse(&core, &a.source).edges.is_empty());
