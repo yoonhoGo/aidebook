@@ -2,11 +2,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
+import MemoryGraphPanel from "./MemoryGraphPanel";
 
 type Page = "work" | "home" | "notes" | "activity" | "search" | "connections" | "settings";
 type WorkTab = "all" | "candidate" | "sources" | "activity";
 type NoteKind = "결정" | "다음 행동" | "미해결 질문" | "선호" | "후보";
-type SettingCategory = "일반" | "모양" | "플러그인" | "에이전트 연결" | "메모와 데이터" | "동기화" | "업데이트와 진단";
+type SettingCategory = "일반" | "모양" | "플러그인" | "에이전트 연결" | "메모와 데이터" | "메모리와 그래프" | "동기화" | "업데이트와 진단";
 
 type CoreStatus = {
   product: string;
@@ -148,7 +149,7 @@ function noteKindFromCore(kind: string): NoteKind {
 }
 
 const works = ["첫 번째 릴리스", "로컬 코어 설계", "커넥터 조사"];
-const settingCategories: SettingCategory[] = ["일반", "모양", "플러그인", "에이전트 연결", "메모와 데이터", "동기화", "업데이트와 진단"];
+const settingCategories: SettingCategory[] = ["일반", "모양", "플러그인", "에이전트 연결", "메모와 데이터", "메모리와 그래프", "동기화", "업데이트와 진단"];
 const noteKinds: NoteKind[] = ["결정", "다음 행동", "미해결 질문", "선호", "후보"];
 
 const sources: Source[] = [
@@ -816,6 +817,7 @@ function App() {
   }
 
   function renderSettingBody() {
+    if (setting === "메모리와 그래프") return <MemoryGraphPanel native={isNativeRuntime()} />;
     if (setting === "일반") return <div className="settings-list"><SettingRow title="로그인 시 자동 실행" description="실제 macOS 적용은 앱 구현에서 제공됩니다."><input type="checkbox" aria-label="자동 실행 예시 설정" checked={settings.autostart} onChange={(event) => setSetting("autostart", event.target.checked)} /></SettingRow><SettingRow title="창을 닫아도 백그라운드 유지" description="CLI와 MCP가 맥락을 조회할 수 있도록 유지합니다."><input type="checkbox" aria-label="백그라운드 유지 예시 설정" checked={settings.background} onChange={(event) => setSetting("background", event.target.checked)} /></SettingRow><SettingRow title="알림" description="새 메모와 확인이 필요한 연결을 알립니다."><input type="checkbox" aria-label="알림 예시 설정" checked={settings.notifications} onChange={(event) => setSetting("notifications", event.target.checked)} /></SettingRow></div>;
     if (setting === "모양") return <div className="settings-list"><SettingRow title="글자 크기" description="본문의 크기를 바로 확인합니다."><select value={settings.textSize} aria-label="글자 크기" onChange={(event) => setSetting("textSize", event.target.value as AppSettings["textSize"])}><option value="15">기본 · 15px</option><option value="16">크게 · 16px</option><option value="18">아주 크게 · 18px</option></select></SettingRow><SettingRow title="모션 감소" description="이동 효과 없이 즉시 전환합니다."><input type="checkbox" aria-label="모션 감소" checked={settings.reduceMotion} onChange={(event) => setSetting("reduceMotion", event.target.checked)} /></SettingRow><div className="card preview-card"><h3>메모 미리보기</h3><p>테스트 환경이 복구될 때까지 배포를 보류합니다.</p></div></div>;
     if (setting === "플러그인") return <div className="settings-list"><p>초기 플러그인은 GitHub와 Obsidian입니다.</p><button className="btn btn-secondary" type="button" onClick={() => navigate("connections")}>연결과 수집 범위 관리</button><div className="notice">제3자 마켓플레이스는 초기 범위에 포함하지 않습니다.</div></div>;
