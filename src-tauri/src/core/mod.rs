@@ -314,6 +314,17 @@ impl Core {
         self.database.memory_history(id)
     }
 
+    pub fn memory_export_markdown(&self) -> CoreResult<String> {
+        self.database.memory_export_markdown()
+    }
+
+    pub fn memory_import_markdown(
+        &self,
+        markdown: String,
+    ) -> CoreResult<MemoryMarkdownImportResult> {
+        self.database.memory_import_markdown(markdown)
+    }
+
     pub fn capture_observation(
         &self,
         input: ObservationCaptureInput,

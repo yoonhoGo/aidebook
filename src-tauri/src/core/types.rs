@@ -659,6 +659,13 @@ pub struct MemoryRevision {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemoryMarkdownImportResult {
+    pub imported: usize,
+    pub idempotent: usize,
+    pub candidates: Vec<MemoryCandidate>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MemoryMutation {
     pub memory: Memory,
     pub created: bool,

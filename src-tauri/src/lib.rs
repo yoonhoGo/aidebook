@@ -3,11 +3,11 @@ pub mod core;
 use core::{
     CandidateAcceptInput, CandidateDistillInput, CandidateProposeInput, CandidateRejectInput,
     CandidateState, ContextQueryRequest, ContextRequest, Core, CoreEndpoint, CoreError, CoreServer,
-    CredentialStore, GitHubAdapter, GitHubConfig, HttpGitHubApi, KeychainCredentialStore,
-    MemoryRestoreInput, MemoryRetractInput, MemoryUpsertInput, ObservationCaptureInput,
-    ObsidianAdapter, ReadOnlyConnector, RelationInput, SearchRequest, Snapshot, SourceRef,
-    SourcesRefreshResult, UiMemoryUpsertInput, VaultChange, VaultConfig, VaultScanResult,
-    VaultWatcher,
+    CredentialStore, GitHubAdapter, GitHubConfig, GraphRebuildRequest, HttpGitHubApi,
+    KeychainCredentialStore, MemoryRestoreInput, MemoryRetractInput, MemoryUpsertInput,
+    ObservationCaptureInput, ObsidianAdapter, ReadOnlyConnector, RelationInput, SearchRequest,
+    Snapshot, SourceRef, SourcesRefreshResult, UiMemoryUpsertInput, VaultChange, VaultConfig,
+    VaultScanResult, VaultWatcher,
 };
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -282,6 +282,14 @@ fn context_query(
 }
 
 #[tauri::command]
+fn graph_rebuild(
+    request: GraphRebuildRequest,
+    state: State<'_, AppState>,
+) -> Result<core::GraphRebuildResponse, CoreError> {
+    state.core.graph_rebuild(request)
+}
+
+#[tauri::command]
 fn relation_add(input: RelationInput, state: State<'_, AppState>) -> Result<(), CoreError> {
     state.core.add_relation(input)
 }
@@ -377,6 +385,19 @@ fn candidate_get(
     state: State<'_, AppState>,
 ) -> Result<core::MemoryCandidate, CoreError> {
     state.core.candidate(&id)
+}
+
+#[tauri::command]
+fn memory_export_markdown(state: State<'_, AppState>) -> Result<String, CoreError> {
+    state.core.memory_export_markdown()
+}
+
+#[tauri::command]
+fn memory_import_markdown(
+    markdown: String,
+    state: State<'_, AppState>,
+) -> Result<core::MemoryMarkdownImportResult, CoreError> {
+    state.core.memory_import_markdown(markdown)
 }
 
 fn ensure_ui_evidence(core: &Core, evidence: &[SourceRef]) -> Result<(), CoreError> {
@@ -492,6 +513,7 @@ pub fn run() {
             context_search,
             context_get,
             context_query,
+            graph_rebuild,
             relation_add,
             relation_remove,
             memory_upsert,
@@ -505,6 +527,8 @@ pub fn run() {
             candidate_list,
             observation_get,
             candidate_get,
+            memory_export_markdown,
+            memory_import_markdown,
             ui_memory_upsert,
             ui_memory_retract,
             ui_memory_restore,

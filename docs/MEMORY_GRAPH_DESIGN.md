@@ -117,9 +117,10 @@ claim type, provenance, wikilink를 안정된 정렬 순서로 기록한다. 동
 동일 옵션에서 반복 export하면 byte-for-byte 결과가 같아야 한다.
 
 import는 Markdown을 parser가 이해할 수 있는 제한된 frontmatter/body 형식으로
-검증하고 candidate `proposed`로만 저장한다. 경로는 지정된 export root 아래로
-정규화하고 `..` escape와 symbolic external target을 거부한다. import가
-canonical memory를 직접 만들거나 외부 vault를 수정하는 경로는 없다.
+검증하고 candidate `proposed`로만 저장한다. 현재 교환은 파일 경로를 받지 않는
+text-only copy/paste 경계이며, export에 포함된 SourceRef가 현재 Core source와
+일치하는지 확인한다. import가 canonical memory를 직접 만들거나 외부 vault를
+수정하는 경로는 없다.
 
 검토 UI는 기존 Aidebook 색상·패널 구조를 재사용해 review queue, graph query,
 export/import 설정을 노출한다. UI에서 보이는 성공은 Core commit 후에만

@@ -2632,6 +2632,183 @@ impl Database {
         }
         Ok(revisions)
     }
+
+    /// Export canonical memories as a deterministic, text-only Markdown
+    /// exchange. The body is kept in an explicit editable fence; metadata and
+    /// evidence remain readable while retaining a lossless JSON line for
+    /// round-tripping SourceRef identity.
+    pub fn memory_export_markdown(&self) -> CoreResult<String> {
+        let ids = {
+            let connection = self.lock()?;
+            let mut statement = connection
+                .prepare("SELECT id FROM memories ORDER BY id")
+                .map_err(database_error)?;
+            let ids = statement
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(database_error)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(database_error)?;
+            ids
+        };
+        let mut output =
+            String::from("<!-- aidebook-memory-exchange:v1 -->\n# Aidebook Memory Exchange\n\n");
+        for id in ids {
+            let memory = self.memory(&id)?;
+            let mut history = self.memory_history(&id)?;
+            history.sort_by_key(|revision| revision.version);
+            let mut evidence = memory.evidence.clone();
+            evidence.sort_by_key(SourceRef::id);
+            let retracted_at = serde_json::to_string(&memory.retracted_at).map_err(|error| {
+                CoreError::Database {
+                    message: error.to_string(),
+                }
+            })?;
+            let supersedes_id = serde_json::to_string(&memory.supersedes_id).map_err(|error| {
+                CoreError::Database {
+                    message: error.to_string(),
+                }
+            })?;
+            output.push_str(&format!("## Memory: {}\n", memory.id));
+            append_markdown_scalar(&mut output, "id", &memory.id)?;
+            output.push_str(&format!("- version: {}\n", memory.version));
+            append_markdown_scalar(&mut output, "author", &memory.author)?;
+            append_markdown_scalar(&mut output, "claim_type", &memory.claim_type)?;
+            append_markdown_scalar(&mut output, "reason", &memory.reason)?;
+            output.push_str(&format!("- retracted_at: {retracted_at}\n"));
+            output.push_str(&format!("- supersedes_id: {supersedes_id}\n\n"));
+            output.push_str("### Aidebook Evidence\n");
+            for source in evidence {
+                let mut value =
+                    serde_json::to_value(&source).map_err(|error| CoreError::Database {
+                        message: error.to_string(),
+                    })?;
+                if let Some(object) = value.as_object_mut() {
+                    object.insert("id".to_string(), serde_json::Value::String(source.id()));
+                }
+                let encoded =
+                    serde_json::to_string(&value).map_err(|error| CoreError::Database {
+                        message: error.to_string(),
+                    })?;
+                output.push_str(&format!("- source: {encoded}\n"));
+                output.push_str(&format!("  wikilink: {}\n", source_wikilink(&source)));
+            }
+            output.push_str("### Aidebook Body\n");
+            let fence = markdown_fence(&memory.body);
+            output.push_str(&format!("{fence}markdown\n"));
+            output.push_str(memory.body.trim_end());
+            output.push('\n');
+            output.push_str(&format!("{fence}\n"));
+            output.push_str("### Aidebook Revisions\n");
+            for mut revision in history {
+                revision.evidence.sort_by_key(SourceRef::id);
+                let encoded =
+                    serde_json::to_string(&revision).map_err(|error| CoreError::Database {
+                        message: error.to_string(),
+                    })?;
+                output.push_str(&format!("- revision: {encoded}\n"));
+            }
+            output.push('\n');
+        }
+        Ok(output)
+    }
+
+    /// Import only into proposed review candidates. Parsing and source
+    /// validation happen before the transaction writes anything, and all
+    /// candidate rows are committed together so a malformed document cannot
+    /// leave a partial review queue.
+    pub fn memory_import_markdown(
+        &self,
+        markdown: String,
+    ) -> CoreResult<MemoryMarkdownImportResult> {
+        let documents = parse_memory_exchange(&markdown)?;
+        let mut connection = self.lock()?;
+        let transaction = connection.transaction().map_err(database_error)?;
+        for document in &documents {
+            for source in &document.evidence {
+                source_ids_for_memory(&transaction, std::slice::from_ref(source))?;
+            }
+        }
+        let mut candidates = Vec::with_capacity(documents.len());
+        let mut imported = 0;
+        let mut idempotent = 0;
+        for document in documents {
+            let digest = exchange_document_digest(&document)?;
+            let candidate_id = format!("cand_import_{}", &digest[..24]);
+            if transaction
+                .query_row(
+                    "SELECT 1 FROM memory_candidates WHERE id = ?1",
+                    params![candidate_id],
+                    |_| Ok(()),
+                )
+                .optional()
+                .map_err(database_error)?
+                .is_some()
+            {
+                candidates.push(load_candidate(&transaction, &candidate_id)?);
+                idempotent += 1;
+                continue;
+            }
+            let observation_id = format!("obs_import_{}", &digest[..24]);
+            let observation_key = format!("markdown-observation:{digest}");
+            let candidate_key = format!("markdown-import:{digest}");
+            let evidence_json =
+                serde_json::to_string(&document.evidence).map_err(|error| CoreError::Database {
+                    message: error.to_string(),
+                })?;
+            let now = now_rfc3339();
+            transaction
+                .execute(
+                    "INSERT INTO observations
+                        (id, session_id, body, evidence_json, actor, state, version,
+                         idempotency_key, idempotency_digest, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, 'markdown-import', 'distilled', 2, ?5, ?6, ?7, ?7)",
+                    params![
+                        observation_id,
+                        format!("markdown:{digest}"),
+                        document.body.clone(),
+                        evidence_json,
+                        observation_key,
+                        digest,
+                        now,
+                    ],
+                )
+                .map_err(database_error)?;
+            transaction
+                .execute(
+                    "INSERT INTO memory_candidates
+                        (id, observation_id, body, reason, evidence_json, author, claim_type,
+                         state, version, idempotency_key, idempotency_digest, created_at,
+                         updated_at, accepted_memory_id, rejection_reason)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'proposed', 2, ?8, ?9, ?10, ?10, NULL, NULL)",
+                    params![
+                        candidate_id,
+                        observation_id,
+                        document.body,
+                        document.reason,
+                        serde_json::to_string(&document.evidence).map_err(|error| {
+                            CoreError::Database {
+                                message: error.to_string(),
+                            }
+                        })?,
+                        document.author,
+                        document.claim_type,
+                        candidate_key,
+                        digest,
+                        now,
+                    ],
+                )
+                .map_err(database_error)?;
+            candidates.push(load_candidate(&transaction, &candidate_id)?);
+            imported += 1;
+        }
+        transaction.commit().map_err(database_error)?;
+        candidates.sort_by(|left, right| left.id.cmp(&right.id));
+        Ok(MemoryMarkdownImportResult {
+            imported,
+            idempotent,
+            candidates,
+        })
+    }
 }
 
 fn migrate(connection: &mut Connection, fail_at: Option<i64>) -> CoreResult<()> {
@@ -2752,6 +2929,314 @@ struct GraphEdgeRow {
     source_hash: String,
     target_hash: Option<String>,
     stale: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ImportedMemoryDocument {
+    id: String,
+    body: String,
+    reason: String,
+    author: String,
+    claim_type: String,
+    evidence: Vec<SourceRef>,
+}
+
+fn append_markdown_scalar(output: &mut String, key: &str, value: &str) -> CoreResult<()> {
+    let encoded = serde_json::to_string(value).map_err(|error| CoreError::Database {
+        message: error.to_string(),
+    })?;
+    output.push_str(&format!("- {key}: {encoded}\n"));
+    Ok(())
+}
+
+fn source_wikilink(source: &SourceRef) -> String {
+    let identity = format!(
+        "{}/{}/{}",
+        source.provider, source.account_id, source.external_id
+    );
+    format!("[[{}]]", identity.replace(']', "\\]"))
+}
+
+fn markdown_fence(body: &str) -> String {
+    let longest = body
+        .lines()
+        .filter_map(|line| {
+            let trimmed = line.trim();
+            if trimmed.chars().all(|character| character == '~') {
+                Some(trimmed.chars().count())
+            } else {
+                None
+            }
+        })
+        .max()
+        .unwrap_or(0);
+    "~".repeat(longest.max(2) + 1)
+}
+
+fn exchange_document_digest(document: &ImportedMemoryDocument) -> CoreResult<String> {
+    let encoded = serde_json::to_vec(document).map_err(|error| CoreError::Database {
+        message: error.to_string(),
+    })?;
+    Ok(sha256_hex(&encoded))
+}
+
+fn markdown_import_error(field: &str, message: impl Into<String>) -> CoreError {
+    CoreError::InvalidInput {
+        field: field.to_string(),
+        message: message.into(),
+    }
+}
+
+fn parse_memory_exchange(markdown: &str) -> CoreResult<Vec<ImportedMemoryDocument>> {
+    if markdown.len() > 2 * 1024 * 1024 {
+        return Err(markdown_import_error(
+            "markdown",
+            "exchange text must not exceed 2 MiB",
+        ));
+    }
+    let lines = markdown.lines().collect::<Vec<_>>();
+    if lines.first().copied() != Some("<!-- aidebook-memory-exchange:v1 -->") {
+        return Err(markdown_import_error(
+            "markdown",
+            "the v1 exchange header is required",
+        ));
+    }
+    let starts = lines
+        .iter()
+        .enumerate()
+        .filter_map(|(index, line)| line.strip_prefix("## Memory: ").map(|_| index))
+        .collect::<Vec<_>>();
+    if starts.is_empty() {
+        return Err(markdown_import_error(
+            "markdown",
+            "at least one memory section is required",
+        ));
+    }
+    let mut seen_ids = HashSet::new();
+    let mut documents = Vec::with_capacity(starts.len());
+    for (position, start) in starts.iter().enumerate() {
+        let end = starts.get(position + 1).copied().unwrap_or(lines.len());
+        let header_id = lines[*start]
+            .strip_prefix("## Memory: ")
+            .unwrap_or_default()
+            .trim();
+        if header_id.is_empty() || header_id.chars().count() > 200 {
+            return Err(markdown_import_error(
+                "memory.id",
+                "must be a non-empty value no longer than 200 characters",
+            ));
+        }
+        if !seen_ids.insert(header_id.to_string()) {
+            return Err(markdown_import_error(
+                "memory.id",
+                "duplicate memory sections are not allowed",
+            ));
+        }
+        let section = &lines[*start + 1..end];
+        let evidence_heading = section
+            .iter()
+            .position(|line| *line == "### Aidebook Evidence")
+            .ok_or_else(|| markdown_import_error("evidence", "evidence heading is required"))?;
+        let body_heading = section
+            .iter()
+            .position(|line| *line == "### Aidebook Body")
+            .ok_or_else(|| markdown_import_error("body", "body heading is required"))?;
+        if evidence_heading >= body_heading {
+            return Err(markdown_import_error(
+                "markdown",
+                "evidence must appear before the body",
+            ));
+        }
+        let revision_heading = section
+            .iter()
+            .position(|line| *line == "### Aidebook Revisions")
+            .unwrap_or(section.len());
+        if revision_heading <= body_heading {
+            return Err(markdown_import_error(
+                "markdown",
+                "revision heading must follow the body",
+            ));
+        }
+        let mut metadata = HashMap::new();
+        for line in &section[..evidence_heading] {
+            let Some(value) = line.strip_prefix("- ") else {
+                if line.trim().is_empty() {
+                    continue;
+                }
+                return Err(markdown_import_error(
+                    "metadata",
+                    "metadata must use `- key: JSON value` lines",
+                ));
+            };
+            let Some((key, raw)) = value.split_once(": ") else {
+                return Err(markdown_import_error(
+                    "metadata",
+                    "metadata line is malformed",
+                ));
+            };
+            if metadata.insert(key.to_string(), raw.to_string()).is_some() {
+                return Err(markdown_import_error(
+                    "metadata",
+                    format!("duplicate metadata key '{key}'"),
+                ));
+            }
+        }
+        let metadata_id = parse_required_string(&metadata, "id")?;
+        if metadata_id != header_id {
+            return Err(markdown_import_error(
+                "memory.id",
+                "header and metadata IDs must match",
+            ));
+        }
+        let version = parse_required_i64(&metadata, "version")?;
+        if version < 1 {
+            return Err(markdown_import_error(
+                "version",
+                "must be greater than zero",
+            ));
+        }
+        let author = parse_required_string(&metadata, "author")?;
+        let claim_type = parse_required_string(&metadata, "claim_type")?;
+        let reason = parse_required_string(&metadata, "reason")?;
+        let _ = parse_optional_string(&metadata, "retracted_at")?;
+        let _ = parse_optional_string(&metadata, "supersedes_id")?;
+        let mut evidence = Vec::new();
+        for line in &section[evidence_heading + 1..body_heading] {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with("wikilink:") {
+                continue;
+            }
+            let Some(raw) = trimmed.strip_prefix("- source: ") else {
+                return Err(markdown_import_error(
+                    "evidence",
+                    "evidence must use exported source lines",
+                ));
+            };
+            let mut value = serde_json::from_str::<serde_json::Value>(raw).map_err(|error| {
+                markdown_import_error("evidence", format!("source JSON is malformed: {error}"))
+            })?;
+            let declared_id = value
+                .as_object_mut()
+                .and_then(|object| object.remove("id"))
+                .and_then(|value| value.as_str().map(ToOwned::to_owned));
+            let source = serde_json::from_value::<SourceRef>(value).map_err(|error| {
+                markdown_import_error("evidence", format!("source is malformed: {error}"))
+            })?;
+            source.validate()?;
+            if declared_id.is_some_and(|id| id != source.id()) {
+                return Err(markdown_import_error(
+                    "evidence",
+                    "source identity does not match its SourceRef fields",
+                ));
+            }
+            if evidence
+                .iter()
+                .any(|existing: &SourceRef| existing.id() == source.id())
+            {
+                return Err(markdown_import_error(
+                    "evidence",
+                    "duplicate source references are not allowed",
+                ));
+            }
+            evidence.push(source);
+        }
+        if evidence.is_empty() {
+            return Err(markdown_import_error(
+                "evidence",
+                "at least one evidence source is required",
+            ));
+        }
+        let body_start = section
+            .iter()
+            .position(|line| line.starts_with('~') && line.ends_with("markdown"))
+            .ok_or_else(|| markdown_import_error("body", "a markdown body fence is required"))?;
+        if body_start <= body_heading || body_start >= revision_heading {
+            return Err(markdown_import_error("body", "body fence is malformed"));
+        }
+        let opening = section[body_start];
+        let fence = opening.strip_suffix("markdown").unwrap_or_default();
+        if fence.len() < 3 || !fence.chars().all(|character| character == '~') {
+            return Err(markdown_import_error("body", "body fence is malformed"));
+        }
+        let closing = (body_start + 1..revision_heading)
+            .find(|index| section[*index] == fence)
+            .ok_or_else(|| markdown_import_error("body", "body fence is not closed"))?;
+        let body = section[body_start + 1..closing].join("\n");
+        if body.trim().is_empty() {
+            return Err(markdown_import_error("body", "must not be empty"));
+        }
+        if contains_credential_marker(&body) || contains_credential_marker(&reason) {
+            return Err(CoreError::SensitiveDataRejected);
+        }
+        for line in &section[closing + 1..revision_heading] {
+            if !line.trim().is_empty() {
+                return Err(markdown_import_error(
+                    "body",
+                    "only blank lines may follow the body fence",
+                ));
+            }
+        }
+        for line in section.get(revision_heading + 1..).unwrap_or_default() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let Some(raw) = trimmed.strip_prefix("- revision: ") else {
+                return Err(markdown_import_error(
+                    "revisions",
+                    "revision line is malformed",
+                ));
+            };
+            serde_json::from_str::<serde_json::Value>(raw).map_err(|error| {
+                markdown_import_error("revisions", format!("revision JSON is malformed: {error}"))
+            })?;
+        }
+        documents.push(ImportedMemoryDocument {
+            id: header_id.to_string(),
+            body,
+            reason,
+            author,
+            claim_type,
+            evidence,
+        });
+    }
+    Ok(documents)
+}
+
+fn parse_required_string(metadata: &HashMap<String, String>, key: &str) -> CoreResult<String> {
+    let raw = metadata
+        .get(key)
+        .ok_or_else(|| markdown_import_error(key, "is required"))?;
+    let value = serde_json::from_str::<String>(raw)
+        .map_err(|error| markdown_import_error(key, format!("must be a JSON string: {error}")))?;
+    if value.trim().is_empty() {
+        return Err(markdown_import_error(key, "must not be empty"));
+    }
+    Ok(value)
+}
+
+fn parse_required_i64(metadata: &HashMap<String, String>, key: &str) -> CoreResult<i64> {
+    let raw = metadata
+        .get(key)
+        .ok_or_else(|| markdown_import_error(key, "is required"))?;
+    raw.parse::<i64>()
+        .map_err(|error| markdown_import_error(key, format!("must be an integer: {error}")))
+}
+
+fn parse_optional_string(
+    metadata: &HashMap<String, String>,
+    key: &str,
+) -> CoreResult<Option<String>> {
+    let Some(raw) = metadata.get(key) else {
+        return Ok(None);
+    };
+    if raw == "null" {
+        return Ok(None);
+    }
+    let value = serde_json::from_str::<String>(raw).map_err(|error| {
+        markdown_import_error(key, format!("must be a JSON string or null: {error}"))
+    })?;
+    Ok(Some(value))
 }
 
 fn filter_graph_response(

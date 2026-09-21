@@ -20,7 +20,10 @@ user-reviewable in-app memories.
   provenance, snapshot/link freshness digests, and bounded traversal; it does
   not alter canonical user relations. G2 adds persistent observations and a
   human-review candidate queue; only an explicit Tauri review command can
-  promote a candidate into canonical memory.
+  promote a candidate into canonical memory. G3 adds the bounded
+  `context.query.v1` packet and review-safe observation/candidate IPC, CLI, and
+  MCP methods. G4 adds deterministic text-only Markdown exchange: imports are
+  proposed candidates and never write an external vault.
 
 The first UI slice mirrors the planned focus: work contexts on the left,
 memory and activity in the centre, and source evidence on the right. Work
@@ -57,7 +60,9 @@ M5 now provides a local SQLite/FTS5 core, deterministic connector fixtures,
 explicitly selected read-only Obsidian/GitHub source adapters, and a Core-backed
 memory UI path with explicit localStorage import. The React UI keeps existing
 localStorage data unless the user chooses import; browser fallback saves are
-labelled as demos. External writes, remote webhook infrastructure, real account
+labelled as demos. Markdown exchange is available from the native settings
+review panel; browser copy/paste remains a fixture/demo boundary. External
+writes, remote webhook infrastructure, real account
 smoke, packaged distribution, and native app verification remain staged
 boundaries. CLI/MCP use the authenticated Core owner and never open SQLite.
 Backups, restore integrity checks, cache-only deletion (including derived graph

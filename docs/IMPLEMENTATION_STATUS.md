@@ -80,6 +80,25 @@ G3 context review 6개와 M4 IPC/MCP integration 1개, Rust unit 11개가 통과
 CLI/MCP transport와 fixture/in-memory Core는 검증했지만 packaged external MCP
 host, native Tauri window, live provider는 여전히 별도 검증 경계다.
 
+## G4 — Core 교환 구현 완료 · native UI 검증 대기 (Markdown review exchange)
+
+- `memory_export_markdown`가 canonical memory를 ID 순으로 정렬하고 현재 본문,
+  evidence SourceRef/canonical URL/wikilink, revision history를 같은 DB와
+  같은 데이터에서 byte-for-byte 재현 가능한 v1 Markdown으로 내보냄
+- `memory_import_markdown`가 제한된 header/metadata/evidence/body fence와
+  현재 source identity를 파싱하고 body 편집을 그대로 candidate에 반영; 모든
+  문서를 먼저 검증한 뒤 하나의 transaction에서 `proposed` candidate만 생성
+- content digest 기반 import idempotency와 credential marker 거부를 적용하고
+  malformed/unknown evidence 입력에서 partial candidate를 남기지 않음
+- Tauri `memory_export_markdown`/`memory_import_markdown` command를 제공하며
+  import는 canonical memory 승격이나 외부 vault 쓰기를 수행하지 않음
+- Markdown exchange integration 3개가 deterministic output, edited body,
+  idempotent reimport, atomic malformed rollback을 검증
+
+검토 queue/graph/query/exchange 설정 패널은 기존 UI 스타일과 localStorage를
+보존하는 native/browser 경계를 유지한다. 실제 Tauri window, 외부 vault 파일
+선택, live provider와 WebGL은 이 text-only exchange 구현으로 증명하지 않는다.
+
 ## M1 — 구현 완료 · native 검증 대기 (선택된 Obsidian vault)
 
 - 사용자가 선택한 한 경로만 canonicalize하여 읽는 `ObsidianAdapter` 추가
@@ -154,8 +173,12 @@ M1의 watcher는 재현 가능한 polling 구현이다. native FSEvents와 실�
   refresh, 잘못된 token 거부, legacy method 호환과 13개 tool count를 검증
 - Tauri `WindowEvent::Destroyed`가 Core server stop flag를 설정해 socket/token/lock
   정리를 요청하며, 실제 native 창 종료·재시작 smoke는 별도로 남김
-- arm64 staged `aidebook-core` + `aidebook-cli`를 임시 DB/socket으로 실행해
-  구조화된 stderr 오류와 MCP `tools/list` 13개 응답(accept/reject 미노출)을 확인
+- arm64 staged `aidebook-core` + `aidebook-cli` local smoke(2026-09-19)는
+  임시 DB/socket, 구조화된 stderr 오류와 MCP `tools/list` 6개를 확인했다.
+- debug `aidebook-core` + `aidebook-cli` smoke(2026-09-21)는 임시 DB/socket에서
+  observation capture → candidate distill/propose/list와 `context.query.v1`,
+  MCP `tools/list` 13개(accept/reject 미노출)를 확인했다. 이는 staged package
+  또는 third-party host/native window 검증이 아니다.
 - standalone owner를 강제 종료한 뒤 stale PID lock/socket을 회수하고 같은
   endpoint로 재시작하는 local smoke도 통과
 
@@ -185,13 +208,14 @@ Keychain/실계정 provider와 함께 실행하는 native smoke는 아직 검증
 | 명령 | 결과 |
 | --- | --- |
 | `npm run build` | 통과: `tsc` + Vite production build |
-| `cargo test --manifest-path src-tauri/Cargo.toml` | 통과: Rust unit 11개, graph integration 7개, candidate lifecycle/review integration 4개, context review 6개, M0 integration 6개, M1 integration 1개, M2 integration 2개, M3 integration 3개, M4 integration 1개, M5 storage 4개, M5 benchmark 1개 |
+| `cargo test --manifest-path src-tauri/Cargo.toml` | 통과: Rust unit 11개, graph integration 7개, candidate lifecycle/review integration 4개, context review 6개, Markdown exchange 3개, M0 integration 6개, M1 integration 1개, M2 integration 2개, M3 integration 3개, M4 integration 1개, M5 storage 4개, M5 benchmark 1개 |
 | `cargo check --manifest-path src-tauri/Cargo.toml` | 통과 |
 | `git diff --check` | 통과 |
 | `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` | 통과 |
-| `cargo test --manifest-path src-tauri/Cargo.toml --test m5_benchmark -- --nocapture` | 통과: seed=20260919, n=10000, warmup=5, runs=30, p95=24.509ms, macOS aarch64 |
+| `cargo test --manifest-path src-tauri/Cargo.toml --test m5_benchmark -- --nocapture` | 통과(2026-09-19 측정): seed=20260919, n=10000, warmup=5, runs=30, p95=24.509ms, macOS aarch64 |
 | `AIDEBOOK_PACKAGE_DIR=/tmp/aidebook-arm64-package scripts/package-arm64.sh` | 통과: arm64 local binaries 3개 staged; 서명/공증/릴리스 미실행 |
-| staged `aidebook-core` + `aidebook-cli` local smoke | 통과: `connections.status` structured stderr, MCP `tools/list` 13개(accept/reject 미노출); third-party host/native window 미검증 |
+| staged `aidebook-core` + `aidebook-cli` local smoke (2026-09-19) | 통과: `connections.status` structured stderr, MCP `tools/list` 6개; third-party host/native window 미검증 |
+| debug Core/CLI/MCP review smoke (2026-09-21) | 통과: candidate capture→distill→propose→list, `context.query.v1`, MCP `tools/list` 13개; staged package/third-party host/native window 미검증 |
 
 ## 검증하지 않은 경계
 

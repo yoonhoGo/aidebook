@@ -96,6 +96,17 @@ revision, evidence, nested memory idempotency 기록, candidate idempotency 기�
 까지 사용할 수 있다. `accept/reject`는 Tauri의 trusted review command에서만
 호출하며 generic IPC/MCP tool 목록에는 포함하지 않는다.
 
+### Markdown exchange
+
+`memory_export_markdown`은 canonical `memories`를 ID와 evidence SourceRef로
+정렬하고 현재 본문, revision history, canonical URL과 wikilink를 포함한 v1
+text-only 문서를 만든다. `memory_import_markdown`은 이 문서의 header, metadata,
+editable body fence, evidence identity와 현재 source 존재 여부를 먼저 검증한
+뒤 모든 항목을 하나의 transaction에서 `proposed` candidate로 만든다. 같은
+문서를 다시 가져오면 content digest 기반 candidate를 재사용하고, malformed
+입력이나 credential marker는 candidate를 남기지 않는다. canonical memory와
+외부 vault에는 자동으로 쓰지 않는다.
+
 ### Relation과 WorkContext
 
 Relation은 명시적인 SourceRef 사이의 링크와 이유만 저장한다. M0의
