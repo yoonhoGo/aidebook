@@ -10,8 +10,10 @@ mod db;
 pub mod fixtures;
 pub mod github;
 pub mod ipc;
+pub mod local_sync;
 pub mod mcp;
 pub mod obsidian;
+pub mod plugins;
 pub mod types;
 
 use db::Database;
@@ -48,7 +50,7 @@ pub fn status() -> CoreStatus {
         product: "Aidebook",
         version: env!("CARGO_PKG_VERSION"),
         persistence: "SQLite + FTS5 (M0)",
-        connectors: "read-only Obsidian + GitHub adapters (M1/M2)",
+        connectors: "read-only Obsidian + GitHub + Jira; local-first multi-connection",
     }
 }
 
@@ -230,6 +232,10 @@ impl Core {
 
     pub fn connections_status(&self, connection_id: &str) -> CoreResult<SyncState> {
         self.sync_state(connection_id)
+    }
+
+    pub fn cached_sources(&self, provider: &str, account_id: &str) -> CoreResult<Vec<SourceRef>> {
+        self.database.cached_sources(provider, account_id)
     }
 
     pub fn snapshot(&self, source: &SourceRef) -> CoreResult<Snapshot> {

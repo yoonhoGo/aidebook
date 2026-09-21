@@ -1,0 +1,8 @@
+{
+  "name": "aidebook",
+  "version": "0.1.0",
+  "description": "Search connected notes and propose evidence-backed memories through the local Aidebook app.",
+  "author": { "name": "Aidebook" },
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json"
+}

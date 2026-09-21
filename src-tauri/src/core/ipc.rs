@@ -344,6 +344,16 @@ impl CoreClient {
                 retry_at: None,
             }
         })?;
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(15)))
+            .map_err(|_| CoreError::Connector {
+                message: "IPC read timeout configuration failed".into(),
+            })?;
+        stream
+            .set_write_timeout(Some(std::time::Duration::from_secs(15)))
+            .map_err(|_| CoreError::Connector {
+                message: "IPC write timeout configuration failed".into(),
+            })?;
         let request = IpcRequest {
             id: Uuid::new_v4().to_string(),
             token: self.token.clone(),

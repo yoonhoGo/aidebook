@@ -29,7 +29,12 @@ sha2 = "0.10"
 thiserror = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
 libc = "0.2"
+toml_edit = { version = "0.25", features = ["serde"] }
+serde_yaml_ng = "0.10"
 
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3.7"
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]

@@ -962,6 +962,32 @@ impl Database {
         load_sync_state(&connection, connection_id)
     }
 
+    /// Cached, non-deleted sources in one explicitly selected namespace.
+    pub fn cached_sources(&self, provider: &str, account_id: &str) -> CoreResult<Vec<SourceRef>> {
+        let connection = self.lock()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT s.provider, s.account_id, s.external_id, s.url, s.kind FROM sources s
+             JOIN snapshots sn ON sn.source_id = s.id
+             WHERE s.provider = ?1 AND s.account_id = ?2 AND sn.is_deleted = 0",
+            )
+            .map_err(database_error)?;
+        let sources = statement
+            .query_map(params![provider, account_id], |row| {
+                Ok(SourceRef {
+                    provider: row.get(0)?,
+                    account_id: row.get(1)?,
+                    external_id: row.get(2)?,
+                    url: row.get(3)?,
+                    kind: row.get(4)?,
+                })
+            })
+            .map_err(database_error)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(database_error)?;
+        Ok(sources)
+    }
+
     pub fn snapshot(&self, source: &SourceRef) -> CoreResult<Snapshot> {
         source.validate()?;
         let connection = self.lock()?;

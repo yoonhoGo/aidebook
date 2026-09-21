@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "aidebook": {
+      "command": "aidebook",
+      "args": ["--aidebook-agent", "mcp"]
+    }
+  }
+}

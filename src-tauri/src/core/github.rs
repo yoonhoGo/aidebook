@@ -77,139 +77,84 @@ impl CredentialStore for MemoryCredentialStore {
     }
 }
 
-/// macOS Keychain adapter.  The token is written to the `security` process's
-/// stdin prompt, never placed in argv, and is never included in an error or
-/// debug value.
+/// Native macOS Keychain access: secrets never enter process arguments or logs.
 #[derive(Debug, Clone, Default)]
 pub struct KeychainCredentialStore;
-
 impl KeychainCredentialStore {
     fn service(connection_id: &str) -> String {
         format!("{KEYCHAIN_SERVICE_PREFIX}{connection_id}")
     }
-
     fn unavailable(message: impl Into<String>) -> CoreError {
         CoreError::Provider {
-            provider: "keychain".to_string(),
-            code: "unavailable".to_string(),
+            provider: "keychain".into(),
+            code: "unavailable".into(),
             message: message.into(),
             retry_at: None,
         }
     }
 }
-
 impl CredentialStore for KeychainCredentialStore {
     fn get(&self, connection_id: &str) -> CoreResult<Option<String>> {
         validate_connection_id(connection_id)?;
         #[cfg(target_os = "macos")]
         {
-            let output = Command::new("/usr/bin/security")
-                .args([
-                    "find-generic-password",
-                    "-s",
-                    &Self::service(connection_id),
-                    "-a",
-                    "aidebook",
-                    "-w",
-                ])
-                .output()
-                .map_err(|error| Self::unavailable(format!("security command failed: {error}")))?;
-            if output.status.success() {
-                let token = String::from_utf8(output.stdout)
-                    .map_err(|_| Self::unavailable("Keychain returned a non-text credential"))?;
-                return Ok(Some(token.trim().to_string()));
+            match security_framework::passwords::get_generic_password(
+                &Self::service(connection_id),
+                "aidebook",
+            ) {
+                Ok(bytes) => String::from_utf8(bytes)
+                    .map(Some)
+                    .map_err(|_| Self::unavailable("Keychain credential is not text")),
+                Err(error) if error.code() == -25300 => Ok(None),
+                Err(_) => Err(Self::unavailable("Keychain lookup was rejected")),
             }
-            let stderr = String::from_utf8_lossy(&output.stderr).to_ascii_lowercase();
-            if stderr.contains("could not be found") || stderr.contains("item not found") {
-                return Ok(None);
-            }
-            return Err(Self::unavailable("Keychain lookup was rejected"));
         }
         #[cfg(not(target_os = "macos"))]
         {
-            let _ = connection_id;
             Err(Self::unavailable(
                 "macOS Keychain is only available on macOS",
             ))
         }
     }
-
     fn set(&self, connection_id: &str, token: &str) -> CoreResult<()> {
         validate_connection_id(connection_id)?;
-        if token.trim().is_empty() {
+        if token.trim().is_empty() || token.chars().any(char::is_control) {
             return Err(CoreError::InvalidInput {
-                field: "token".to_string(),
-                message: "must not be empty".to_string(),
+                field: "token".into(),
+                message: "must be nonempty and contain no control characters".into(),
             });
         }
         #[cfg(target_os = "macos")]
         {
-            let mut child = Command::new("/usr/bin/security")
-                .args([
-                    "add-generic-password",
-                    "-U",
-                    "-s",
-                    &Self::service(connection_id),
-                    "-a",
-                    "aidebook",
-                    "-w",
-                ])
-                .stdin(Stdio::piped())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn()
-                .map_err(|error| Self::unavailable(format!("security command failed: {error}")))?;
-            if let Some(mut stdin) = child.stdin.take() {
-                if stdin
-                    .write_all(token.as_bytes())
-                    .and_then(|_| stdin.write_all(b"\n"))
-                    .is_err()
-                {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err(Self::unavailable("Keychain prompt could not be completed"));
-                }
-            }
-            let status = child
-                .wait()
-                .map_err(|error| Self::unavailable(format!("security command failed: {error}")))?;
-            if status.success() {
-                return Ok(());
-            }
-            return Err(Self::unavailable("Keychain write was rejected"));
+            security_framework::passwords::set_generic_password(
+                &Self::service(connection_id),
+                "aidebook",
+                token.as_bytes(),
+            )
+            .map_err(|_| Self::unavailable("Keychain write was rejected"))
         }
         #[cfg(not(target_os = "macos"))]
         {
-            let _ = (connection_id, token);
             Err(Self::unavailable(
                 "macOS Keychain is only available on macOS",
             ))
         }
     }
-
     fn delete(&self, connection_id: &str) -> CoreResult<()> {
         validate_connection_id(connection_id)?;
         #[cfg(target_os = "macos")]
         {
-            let status = Command::new("/usr/bin/security")
-                .args([
-                    "delete-generic-password",
-                    "-s",
-                    &Self::service(connection_id),
-                    "-a",
-                    "aidebook",
-                ])
-                .status()
-                .map_err(|error| Self::unavailable(format!("security command failed: {error}")))?;
-            if status.success() {
-                return Ok(());
+            match security_framework::passwords::delete_generic_password(
+                &Self::service(connection_id),
+                "aidebook",
+            ) {
+                Ok(()) => Ok(()),
+                Err(error) if error.code() == -25300 => Ok(()),
+                Err(_) => Err(Self::unavailable("Keychain deletion was rejected")),
             }
-            // Deleting an already-revoked/missing credential is idempotent.
-            return Ok(());
         }
         #[cfg(not(target_os = "macos"))]
         {
-            let _ = connection_id;
             Err(Self::unavailable(
                 "macOS Keychain is only available on macOS",
             ))
@@ -452,16 +397,21 @@ impl GitHubApi for HttpGitHubApi {
             } else {
                 "issue"
             };
-            let comments =
-                if let Some(comments_url) = item.get("comments_url").and_then(Value::as_str) {
-                    if item.get("comments").and_then(Value::as_u64).unwrap_or(0) > 0 {
-                        parse_comments(&curl_json(comments_url, token)?)?
-                    } else {
-                        Vec::new()
-                    }
+            let comments = if item.get("comments_url").and_then(Value::as_str).is_some() {
+                if item.get("comments").and_then(Value::as_u64).unwrap_or(0) > 0 {
+                    parse_comments(&curl_json(
+                        &format!(
+                            "{base}/repos/{}/{}/issues/{number}/comments",
+                            config.owner, config.repository
+                        ),
+                        token,
+                    )?)?
                 } else {
                     Vec::new()
-                };
+                }
+            } else {
+                Vec::new()
+            };
             let labels = item
                 .get("labels")
                 .and_then(Value::as_array)
@@ -842,7 +792,23 @@ fn parse_comments(value: &Value) -> Result<Vec<GitHubComment>, GitHubApiError> {
         .collect()
 }
 
+pub(super) fn authenticated_login(token: &str) -> CoreResult<String> {
+    let response = curl_json("https://api.github.com/user", token).map_err(map_github_error)?;
+    response
+        .get("login")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| CoreError::Connector {
+            message: "GitHub account identity is missing".into(),
+        })
+}
+
 fn curl_json(url: &str, token: &str) -> Result<Value, GitHubApiError> {
+    if token.chars().any(char::is_control) || url.chars().any(char::is_control) {
+        return Err(GitHubApiError::Network {
+            message: "invalid request configuration".into(),
+        });
+    }
     let mut config = String::new();
     config.push_str("silent\nshow-error\n");
     config.push_str(&format!("url = {}\n", curl_config_quote(url)));
@@ -860,7 +826,19 @@ fn curl_json(url: &str, token: &str) -> Result<Value, GitHubApiError> {
     ));
     config.push_str("write-out = \"\\nAIDEBOOK_STATUS:%{http_code}\"\n");
     let mut child = Command::new("curl")
-        .args(["--config", "-"])
+        .args([
+            "-q",
+            "--max-time",
+            "30",
+            "--connect-timeout",
+            "10",
+            "--max-filesize",
+            "8388608",
+            "--proto",
+            "=https",
+            "--config",
+            "-",
+        ])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -883,6 +861,11 @@ fn curl_json(url: &str, token: &str) -> Result<Value, GitHubApiError> {
         .map_err(|error| GitHubApiError::Network {
             message: format!("curl did not finish: {error}"),
         })?;
+    if !output.status.success() {
+        return Err(GitHubApiError::Network {
+            message: "GitHub request failed or exceeded its limit".into(),
+        });
+    }
     let text = String::from_utf8(output.stdout).map_err(|_| GitHubApiError::Malformed {
         message: "GitHub response was not UTF-8".to_string(),
     })?;

@@ -1,3 +1,4 @@
+pub mod agents;
 pub mod core;
 
 use core::{
@@ -18,6 +19,9 @@ use std::sync::{
 use tauri::{Manager, State, WindowEvent};
 
 struct AppState {
+    agent_installer: Arc<agents::AgentInstaller>,
+    plugins: Arc<Mutex<core::plugins::PluginRegistry>>,
+    local_sync: Arc<core::local_sync::LocalSync>,
     core: Core,
     core_stop: Arc<AtomicBool>,
     vault: Mutex<Option<ObsidianAdapter>>,
@@ -80,6 +84,146 @@ struct GitHubDisconnectInput {
     connection_id: String,
     #[serde(default)]
     delete_credential: bool,
+}
+
+#[tauri::command]
+async fn agent_connections_status(
+    state: State<'_, AppState>,
+) -> Result<Vec<agents::AgentStatus>, CoreError> {
+    let installer = state.agent_installer.clone();
+    tauri::async_runtime::spawn_blocking(move || installer.status())
+        .await
+        .map_err(|_| plugin_lock_error())
+}
+#[tauri::command]
+async fn agent_connection_install(
+    agent: agents::Agent,
+    state: State<'_, AppState>,
+) -> Result<agents::InstallResult, CoreError> {
+    let installer = state.agent_installer.clone();
+    tauri::async_runtime::spawn_blocking(move || installer.install(agent))
+        .await
+        .map_err(|_| plugin_lock_error())?
+}
+#[tauri::command]
+async fn agent_connection_uninstall(
+    agent: agents::Agent,
+    state: State<'_, AppState>,
+) -> Result<agents::InstallResult, CoreError> {
+    let installer = state.agent_installer.clone();
+    tauri::async_runtime::spawn_blocking(move || installer.uninstall(agent))
+        .await
+        .map_err(|_| plugin_lock_error())?
+}
+#[tauri::command]
+async fn agent_connection_probe(
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, CoreError> {
+    let installer = state.agent_installer.clone();
+    tauri::async_runtime::spawn_blocking(move || installer.probe())
+        .await
+        .map_err(|_| plugin_lock_error())?
+}
+
+#[tauri::command]
+fn plugin_list(
+    state: State<'_, AppState>,
+) -> Result<Vec<core::plugins::PluginConnection>, CoreError> {
+    Ok(state
+        .plugins
+        .lock()
+        .map_err(|_| plugin_lock_error())?
+        .list())
+}
+fn plugin_lock_error() -> CoreError {
+    CoreError::Connector {
+        message: "connection registry unavailable".into(),
+    }
+}
+#[tauri::command]
+fn plugin_add(
+    input: core::plugins::PluginConnection,
+    state: State<'_, AppState>,
+) -> Result<core::plugins::PluginConnection, CoreError> {
+    state
+        .plugins
+        .lock()
+        .map_err(|_| plugin_lock_error())?
+        .add(input)
+}
+#[tauri::command]
+async fn plugin_remove(
+    id: String,
+    delete_credential: bool,
+    state: State<'_, AppState>,
+) -> Result<(), CoreError> {
+    let registry = state.plugins.clone();
+    let local_sync = state.local_sync.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let connection = registry.lock().map_err(|_| plugin_lock_error())?.get(&id)?;
+        if connection.provider == core::plugins::Provider::Obsidian {
+            return local_sync.remove(&id);
+        }
+        let mut registry = registry.lock().map_err(|_| plugin_lock_error())?;
+        if delete_credential && connection.auth == core::plugins::AuthMethod::Token {
+            KeychainCredentialStore.delete(&core::plugins::credential_key(&id))?;
+        }
+        registry.remove(&id)
+    })
+    .await
+    .map_err(|_| plugin_lock_error())?
+}
+#[tauri::command]
+fn plugin_sync_status(
+    state: State<'_, AppState>,
+) -> Result<Vec<core::local_sync::LocalSyncStatus>, CoreError> {
+    state.local_sync.statuses()
+}
+#[tauri::command]
+async fn plugin_sync_configure(
+    id: String,
+    enabled: bool,
+    state: State<'_, AppState>,
+) -> Result<(), CoreError> {
+    let local_sync = state.local_sync.clone();
+    tauri::async_runtime::spawn_blocking(move || local_sync.set_enabled(&id, enabled))
+        .await
+        .map_err(|_| plugin_lock_error())?
+}
+#[tauri::command]
+fn plugin_token_set(
+    id: String,
+    token: String,
+    state: State<'_, AppState>,
+) -> Result<(), CoreError> {
+    let connection = state
+        .plugins
+        .lock()
+        .map_err(|_| plugin_lock_error())?
+        .get(&id)?;
+    core::plugins::set_token(&connection, &token)
+}
+#[tauri::command]
+async fn plugin_refresh(
+    id: String,
+    state: State<'_, AppState>,
+) -> Result<SourcesRefreshResult, CoreError> {
+    let connection = state
+        .plugins
+        .lock()
+        .map_err(|_| plugin_lock_error())?
+        .get(&id)?;
+    let core = state.core.clone();
+    let local_sync = state.local_sync.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        if connection.provider == core::plugins::Provider::Obsidian {
+            local_sync.refresh(&id, false)
+        } else {
+            core::plugins::refresh(&core, connection)
+        }
+    })
+    .await
+    .map_err(|_| plugin_lock_error())?
 }
 
 #[tauri::command]
@@ -493,7 +637,25 @@ pub fn run() {
                 let _ = server.serve_until(core_stop_for_server);
             });
             app.manage(endpoint);
+            let plugins = Arc::new(Mutex::new(core::plugins::PluginRegistry::open(
+                data_dir.join("connections.json"),
+            )?));
+            let local_sync = Arc::new(core::local_sync::LocalSync::new(
+                core.clone(),
+                plugins.clone(),
+            ));
+            let background_sync = local_sync.clone();
+            let sync_stop = core_stop.clone();
+            std::thread::spawn(move || background_sync.run(sync_stop));
+            let agent_installer = Arc::new(agents::AgentInstaller::new(
+                app.path().home_dir()?,
+                data_dir.clone(),
+                std::env::current_exe()?,
+            ));
             app.manage(AppState {
+                agent_installer,
+                plugins,
+                local_sync,
                 core,
                 core_stop,
                 vault: Mutex::new(None),
@@ -503,6 +665,17 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            agent_connections_status,
+            agent_connection_install,
+            agent_connection_uninstall,
+            agent_connection_probe,
+            plugin_list,
+            plugin_sync_status,
+            plugin_sync_configure,
+            plugin_add,
+            plugin_remove,
+            plugin_token_set,
+            plugin_refresh,
             core_status,
             vault_select,
             vault_scan,

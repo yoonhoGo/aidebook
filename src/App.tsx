@@ -7,6 +7,8 @@ import { createGraphModel, sourceGraphId, noteGraphId, graphNodeKindLabel, graph
 import type { GraphNode, GraphLink, GraphSelection } from "./graph-model";
 import "./App.css";
 import MemoryGraphPanel from "./MemoryGraphPanel";
+import PluginsPanel from "./PluginsPanel";
+import AgentConnectionsPanel from "./AgentConnectionsPanel";
 
 const GraphCanvas = lazy(() => import("./GraphCanvas"));
 
@@ -132,7 +134,6 @@ const STORAGE_ACTIVITIES = "aidebook-activities-v1";
 const STORAGE_SESSION = "aidebook-session-v1";
 const STORAGE_SETTINGS = "aidebook-settings-v1";
 const STORAGE_SCOPES = "aidebook-scopes-v1";
-const STORAGE_NATIVE_SCOPES = "aidebook-native-scopes-v1";
 const DEFAULT_INSPECTOR_WIDTH = 330;
 
 function isNativeRuntime() {
@@ -311,7 +312,6 @@ function App() {
   const [activities, setActivities] = useState<Activity[]>(() => readStorage(STORAGE_ACTIVITIES, initialActivities));
   const [settings, setSettings] = useState<AppSettings>(() => readStorage(STORAGE_SETTINGS, defaultSettings));
   const [scopes, setScopes] = useState<Record<string, string>>(() => readStorage(STORAGE_SCOPES, {}));
-  const [nativeScopes, setNativeScopes] = useState<Record<string, string>>(() => readStorage(STORAGE_NATIVE_SCOPES, {}));
   const [page, setPage] = useState<Page>(() => readStorage(STORAGE_SESSION, { page: "work" as Page }).page);
   const [work, setWork] = useState(() => readStorage(STORAGE_SESSION, { work: 0 }).work);
   const [selected, setSelected] = useState(() => readStorage(STORAGE_SESSION, { selected: 1 }).selected);
@@ -380,7 +380,6 @@ function App() {
     document.body.classList.toggle("reduce-motion", settings.reduceMotion);
   }, [settings]);
   useEffect(() => { localStorage.setItem(STORAGE_SCOPES, JSON.stringify(scopes)); }, [scopes]);
-  useEffect(() => { localStorage.setItem(STORAGE_NATIVE_SCOPES, JSON.stringify(nativeScopes)); }, [nativeScopes]);
   useEffect(() => {
     localStorage.setItem(STORAGE_SESSION, JSON.stringify({ page, work, selected, tab, setting, sidebarHidden, inspectorHidden, inspectorWidth }));
     document.documentElement.style.setProperty("--inspector-width", `${inspectorWidth}px`);
@@ -710,100 +709,14 @@ function App() {
     setNotes(previous); setUndoStack((stack) => stack.slice(0, -1)); setToast("이전 메모 상태로 되돌렸습니다.");
   }
 
-  async function selectSource(source: Source) {
-    if (!isNativeRuntime()) {
-      setToast("브라우저 데모에서는 실제 볼트·GitHub 계정을 연결하지 않습니다.");
-      return;
-    }
-    setRefreshingSource(source.id);
-    setRefreshMessage("사용자가 선택한 읽기 범위를 확인하는 중입니다.");
-    try {
-      if (source.provider === "Obsidian") {
-        const path = window.prompt("읽을 Obsidian vault 경로를 선택하세요. 자동 검색하지 않습니다.", nativeScopes.obsidian ?? "");
-        if (!path?.trim()) return;
-        const selection = await invoke<{ root_path: string }>("vault_select", {
-          input: { path: path.trim(), account_id: "selected-vault" },
-        });
-        const result = await invoke<{ scan: { snapshots: unknown[]; inaccessible: number }; changes: unknown[]; refresh: { indexed: number } }>("vault_scan");
-        setNativeScopes((current) => ({ ...current, obsidian: selection.root_path }));
-        setRefreshMessage(`선택한 vault에서 ${result.refresh.indexed}개를 색인했습니다 · 변경 ${result.changes.length}개 · 접근 불가 ${result.scan.inaccessible}개`);
-        setToast("선택한 Obsidian 범위만 코어에 저장했습니다.");
-      } else {
-        const owner = window.prompt("GitHub owner를 입력하세요.", "aidebook");
-        const repository = window.prompt("GitHub repository를 입력하세요.", "aidebook");
-        if (!owner?.trim() || !repository?.trim()) return;
-        const connectionId = `github-${owner.trim()}-${repository.trim()}`;
-        await invoke<{ scope: string }>("github_select", {
-          input: {
-            account_id: owner.trim(),
-            connection_id: connectionId,
-            owner: owner.trim(),
-            repository: repository.trim(),
-          },
-        });
-        const token = window.prompt("GitHub token을 입력하세요. 비워두면 기존 macOS Keychain credential을 사용합니다.");
-        if (token?.trim()) {
-          await invoke("github_credential_set", { input: { connection_id: connectionId, token } });
-        }
-        const result = await invoke<{ indexed: number }>("github_refresh");
-        setNativeScopes((current) => ({ ...current, github: `${owner.trim()}/${repository.trim()}` }));
-        setRefreshMessage(`선택한 ${owner.trim()}/${repository.trim()}에서 ${result.indexed}개를 색인했습니다.`);
-        setToast("선택한 GitHub 저장소만 Keychain 경계 안에서 읽었습니다.");
-      }
-    } catch (error) {
-      setRefreshMessage(`연결하지 못함 · 마지막 캐시를 유지합니다: ${String(error)}`);
-      setToast(`연결하지 못했습니다: ${String(error)}`);
-    } finally {
-      setRefreshingSource(null);
-    }
-  }
-
   async function refreshSource(source: Source) {
     if (!isNativeRuntime()) {
       setRefreshingSource(source.id); setRefreshMessage("브라우저 데모 확인 중 · 실제 계정이나 vault에는 접근하지 않습니다.");
       window.setTimeout(() => { setRefreshingSource(null); setRefreshMessage("데모 확인만 완료했습니다 · 마지막 예시 캐시를 유지합니다."); }, 700);
       return;
     }
-    setRefreshingSource(source.id); setRefreshMessage("선택된 범위의 마지막 상태를 확인하는 중입니다.");
-    try {
-      if (source.provider === "Obsidian") {
-        const result = await invoke<{ scan: { inaccessible: number }; changes: unknown[]; refresh: { indexed: number } }>("vault_scan");
-        setRefreshMessage(`선택된 vault ${result.refresh.indexed}개를 확인했습니다 · 변경 ${result.changes.length}개 · 접근 불가 ${result.scan.inaccessible}개`);
-      } else {
-        const result = await invoke<{ indexed: number }>("github_refresh");
-        setRefreshMessage(`선택된 GitHub 범위 ${result.indexed}개를 확인했습니다.`);
-      }
-      setToast("선택된 읽기 범위의 최신 상태를 코어에 반영했습니다.");
-    } catch (error) {
-      setRefreshMessage(`확인하지 못함 · 마지막 캐시를 유지합니다: ${String(error)}`);
-      setToast(`갱신하지 못했습니다: ${String(error)}`);
-    } finally {
-      setRefreshingSource(null);
-    }
-  }
-
-  async function disconnectSource(source: Source) {
-    if (!isNativeRuntime()) {
-      setToast("브라우저 데모에서는 실제 연결을 해제하지 않습니다.");
-      return;
-    }
-    if (source.provider !== "GitHub" || !nativeScopes.github) {
-      setToast("해제할 GitHub 선택 범위가 없습니다.");
-      return;
-    }
-    const connectionId = `github-${nativeScopes.github.replace("/", "-")}`;
-    const deleteCredential = window.confirm("선택한 GitHub credential도 macOS Keychain에서 삭제할까요?");
-    try {
-      await invoke("github_disconnect", { input: { connection_id: connectionId, delete_credential: deleteCredential } });
-      setNativeScopes((current) => {
-        const next = { ...current };
-        delete next.github;
-        return next;
-      });
-      setToast(deleteCredential ? "GitHub 연결과 credential을 해제했습니다." : "GitHub 선택 범위만 해제했습니다. credential은 보존했습니다.");
-    } catch (error) {
-      setToast(`연결을 해제하지 못했습니다: ${String(error)}`);
-    }
+    navigate("connections");
+    setToast("연결 관리에서 확인할 계정과 경로를 선택하세요.");
   }
 
   function setSetting<K extends keyof AppSettings>(key: K, value: AppSettings[K]) { setSettings((current) => ({ ...current, [key]: value })); setToast("설정을 저장했습니다."); }
@@ -901,9 +814,7 @@ function App() {
     return <div className="page"><section className="section overview-section"><div className="container"><h1>맥락 검색</h1><p className="muted">작업 묶음을 넘어 메모와 원본 자료를 찾습니다.</p><div className="searchbox"><label className="sr-only" htmlFor="global-query">검색어</label><div className="search-input-wrap"><Icon name="search" /><input id="global-query" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="배포, 테스트, 읽기 전용…" /></div><label className="sr-only" htmlFor="search-filter">자료 유형</label><select id="search-filter" value={filter} onChange={(event) => setFilter(event.target.value)}><option value="all">모든 자료</option><option value="notes">메모</option><option value="GitHub">GitHub</option><option value="Obsidian">Obsidian</option></select></div><div className="subhead">검색 결과 {matchingNotes.length + matchingSources.length}개</div>{matchingNotes.map((note) => <NoteCard key={`note-${note.id}`} note={note} selected={note.id === selected} onClick={() => selectNote(note.id)} />)}<SourceList sources={matchingSources} onOpen={(source) => setDetail({ type: "source", source })} />{matchingNotes.length + matchingSources.length === 0 && <div className="empty">일치하는 자료가 없습니다. 다른 검색어를 입력해 주세요.</div>}</div></section></div>;
   }
 
-  function ConnectionsPage() {
-    return <div className="page"><section className="section overview-section"><div className="container"><p className="eyebrow">수집과 최신성</p><h1>연결 상태</h1><p className="muted">무엇을 읽는지, 언제 확인했는지 살펴봅니다.</p><div className="notice"><strong>읽기 전용 경계</strong><br />브라우저 데모는 예시 캐시만 보여줍니다. 네이티브 앱에서는 사용자가 선택한 vault 또는 저장소만 연결하며 자동 검색하지 않습니다.{refreshMessage && <span className="status-inline">{refreshMessage}</span>}</div><div className="connection-list">{sources.map((source) => <article className="card connection-card" key={source.id}><div className="row-between"><div className="source-heading"><span className={`provider provider-${source.provider.toLowerCase()}`}>{source.provider[0]}</span><h2>{source.provider}</h2></div><span className="tag">{source.stale ? "갱신 실패" : "캐시 유지"}</span></div><p>{source.provider === "GitHub" ? "선택한 저장소의 이슈·PR·리뷰" : "허용한 볼트의 Markdown 문서"}</p><p className="small muted">마지막 성공 {source.time} · 읽기 전용</p>{nativeScopes[source.provider === "GitHub" ? "github" : "obsidian"] && <p className="small muted">현재 선택: {nativeScopes[source.provider === "GitHub" ? "github" : "obsidian"]}</p>}<div className="card-actions"><button className="btn btn-secondary" type="button" onClick={() => { void selectSource(source); }}>범위 선택 및 연결</button><button className="btn btn-ghost" type="button" onClick={() => setDetail({ type: "scope", source })}>수집 범위</button><button className="btn btn-ghost" type="button" disabled={refreshingSource === source.id} onClick={() => { void refreshSource(source); }}>{refreshingSource === source.id ? "확인 중…" : "다시 확인"}</button>{source.provider === "GitHub" && nativeScopes.github && <button className="btn btn-ghost" type="button" onClick={() => { void disconnectSource(source); }}>연결 해제</button>}</div></article>)}</div><p className="small muted">Jira, Slack, Google, Confluence는 후속 연결 대상으로 계획되어 있습니다.</p></div></section></div>;
-  }
+  function ConnectionsPage() { return <PluginsPanel />; }
 
   function SettingsPage() {
     return <div className="page"><section className="section overview-section"><div className="container"><h1>설정</h1><p className="muted">기억하는 방식과 연결 범위를 내 환경에 맞게.</p><div className="setting-layout"><nav className="setting-nav" aria-label="설정 분류">{settingCategories.map((category) => <button type="button" key={category} className={category === setting ? "active" : ""} aria-current={category === setting ? "page" : undefined} onClick={() => setSettingCategory(category)}>{category}</button>)}</nav><div className="setting-content"><h2>{setting}</h2>{renderSettingBody()}<p className="footnote">설정은 이 기기에 저장됩니다. OS 권한이나 외부 계정은 변경하지 않습니다.</p></div></div></div></section></div>;
@@ -913,10 +824,10 @@ function App() {
     if (setting === "메모리와 그래프") return <MemoryGraphPanel native={isNativeRuntime()} />;
     if (setting === "일반") return <div className="settings-list"><SettingRow title="로그인 시 자동 실행" description="실제 macOS 적용은 앱 구현에서 제공됩니다."><input type="checkbox" aria-label="자동 실행 예시 설정" checked={settings.autostart} onChange={(event) => setSetting("autostart", event.target.checked)} /></SettingRow><SettingRow title="창을 닫아도 백그라운드 유지" description="CLI와 MCP가 맥락을 조회할 수 있도록 유지합니다."><input type="checkbox" aria-label="백그라운드 유지 예시 설정" checked={settings.background} onChange={(event) => setSetting("background", event.target.checked)} /></SettingRow><SettingRow title="알림" description="새 메모와 확인이 필요한 연결을 알립니다."><input type="checkbox" aria-label="알림 예시 설정" checked={settings.notifications} onChange={(event) => setSetting("notifications", event.target.checked)} /></SettingRow></div>;
     if (setting === "모양") return <div className="settings-list"><SettingRow title="글자 크기" description="본문의 크기를 바로 확인합니다."><select value={settings.textSize} aria-label="글자 크기" onChange={(event) => setSetting("textSize", event.target.value as AppSettings["textSize"])}><option value="15">기본 · 15px</option><option value="16">크게 · 16px</option><option value="18">아주 크게 · 18px</option></select></SettingRow><SettingRow title="모션 감소" description="이동 효과 없이 즉시 전환합니다."><input type="checkbox" aria-label="모션 감소" checked={settings.reduceMotion} onChange={(event) => setSetting("reduceMotion", event.target.checked)} /></SettingRow><div className="card preview-card"><h3>메모 미리보기</h3><p>테스트 환경이 복구될 때까지 배포를 보류합니다.</p></div></div>;
-    if (setting === "플러그인") return <div className="settings-list"><p>초기 플러그인은 GitHub와 Obsidian입니다.</p><button className="btn btn-secondary" type="button" onClick={() => navigate("connections")}>연결과 수집 범위 관리</button><div className="notice">제3자 마켓플레이스는 초기 범위에 포함하지 않습니다.</div></div>;
-    if (setting === "에이전트 연결") return <div className="settings-list"><div className="notice">연결 전 · 외부 에이전트가 도구를 호출한 경우에만 메모를 기록합니다.</div><SettingRow title="CLI 설치 상태" description="이 앱에서는 로컬 설치 여부를 확인할 수 없습니다."><span className="tag">확인하지 못함</span></SettingRow><h3>로컬 MCP 설정</h3><pre>{JSON.stringify({ mcpServers: { aidebook: { command: "aidebook", args: ["mcp", "serve", "--stdio"] } } }, null, 2)}</pre><button className="btn btn-secondary" type="button" onClick={() => { void navigator.clipboard?.writeText(JSON.stringify({ mcpServers: { aidebook: { command: "aidebook", args: ["mcp", "serve", "--stdio"] } } }, null, 2)); setToast("MCP 설정을 복사했습니다."); }}>설정 복사</button><p className="small muted">제안된 CLI 형식입니다. 실제 바이너리 설치 후 사용할 수 있습니다.</p></div>;
+    if (setting === "플러그인") return <div className="settings-list"><p>Obsidian 로컬 경로를 우선으로 GitHub와 Jira를 연결합니다. 여러 계정과 경로를 각각 관리할 수 있습니다.</p><button className="btn btn-secondary" type="button" onClick={() => navigate("connections")}>연결과 수집 범위 관리</button><div className="notice">제3자 마켓플레이스는 초기 범위에 포함하지 않습니다.</div></div>;
+    if (setting === "에이전트 연결") return <AgentConnectionsPanel />;
     if (setting === "메모와 데이터") return <div className="settings-list"><SettingRow title="자동 메모 기준" description="명시한 결정·선호·제약을 기록하고, 추론은 후보로 구분합니다."><span className="tag">초기 기준</span></SettingRow><SettingRow title="비기록 범위" description="인증 비밀은 기록 대상에서 제외합니다."><input className="inline-input" aria-label="비기록 범위" value={settings.exclude} onChange={(event) => setSetting("exclude", event.target.value)} placeholder="예: 개인 일기" /></SettingRow><SettingRow title="메모 내보내기" description="이 기기에 저장된 메모를 JSON으로 내려받습니다."><button className="btn btn-secondary" type="button" onClick={exportNotes}>내보내기</button></SettingRow><SettingRow title="로컬 메모를 코어로 가져오기" description="명시적으로 실행할 때만 localStorage 메모를 네이티브 SQLite 코어에 복사합니다. 원본 localStorage는 삭제하지 않습니다."><button className="btn btn-secondary" type="button" onClick={() => { void importLocalNotes(); }}>가져오기</button></SettingRow><div className="notice">저장 성공은 코어의 commit 뒤에만 표시됩니다. 브라우저에서는 데모 저장과 네이티브 저장을 구분합니다.</div></div>;
-    if (setting === "동기화") return <div className="settings-list"><SettingRow title="조회 주기" description="실제 연결 후 앱이 실행 중일 때 적용됩니다."><select value={settings.syncPeriod} aria-label="조회 주기" onChange={(event) => setSetting("syncPeriod", event.target.value as AppSettings["syncPeriod"])}><option>5분</option><option>15분</option><option>수동</option></select></SettingRow><SettingRow title="웹훅 릴레이" description="사용자가 별도로 켜고 권한을 부여해야 합니다."><span className="tag">연결 안 함</span></SettingRow><button className="btn btn-secondary" type="button" onClick={() => navigate("connections")}>연결별 마지막 성공 확인</button><div className="card"><h3>로컬 데이터 보호</h3><p className="small muted">연결 해제는 credential과 선택 범위를 끊고, 캐시 삭제는 별도의 명시 작업입니다. 사용자 메모는 백업·복원과 독립적으로 보존됩니다.</p><div className="actions"><button className="btn btn-secondary" type="button" onClick={() => { void backupCore(); }}>백업</button><button className="btn btn-secondary" type="button" onClick={() => { void restoreCore(); }}>복원</button><button className="btn btn-ghost" type="button" onClick={() => { void clearCoreCache(); }}>캐시만 삭제</button></div></div></div>;
+    if (setting === "동기화") return <div className="settings-list"><SettingRow title="원격 조회 주기 (준비 중)" description="GitHub·Jira 자동 조회는 아직 적용되지 않습니다. Obsidian은 연결별 자동 갱신을 켜면 10초 간격으로 확인합니다."><select disabled value={settings.syncPeriod} aria-label="조회 주기" onChange={(event) => setSetting("syncPeriod", event.target.value as AppSettings["syncPeriod"])}><option>5분</option><option>15분</option><option>수동</option></select></SettingRow><SettingRow title="웹훅 릴레이" description="사용자가 별도로 켜고 권한을 부여해야 합니다."><span className="tag">연결 안 함</span></SettingRow><button className="btn btn-secondary" type="button" onClick={() => navigate("connections")}>연결별 마지막 성공 확인</button><div className="card"><h3>로컬 데이터 보호</h3><p className="small muted">연결 해제는 credential과 선택 범위를 끊고, 캐시 삭제는 별도의 명시 작업입니다. 사용자 메모는 백업·복원과 독립적으로 보존됩니다.</p><div className="actions"><button className="btn btn-secondary" type="button" onClick={() => { void backupCore(); }}>백업</button><button className="btn btn-secondary" type="button" onClick={() => { void restoreCore(); }}>복원</button><button className="btn btn-ghost" type="button" onClick={() => { void clearCoreCache(); }}>캐시만 삭제</button></div></div></div>;
     return <div className="settings-list"><p>디자인 및 로컬 기능 · 2026.09.18</p><div className="notice">초기 업데이트는 Homebrew 배포 경로를 사용할 계획입니다. 설치·업데이트 기능은 이 화면에서 실행하지 않습니다.</div><p className="small muted">진단 예시에는 토큰, 외부 문서 본문, 메모 본문을 포함하지 않습니다.</p><button className="btn btn-secondary" type="button" onClick={exportDiagnostics}>진단 예시 내보내기</button></div>;
   }
 
@@ -978,7 +889,7 @@ function App() {
   function exportDiagnostics() { downloadJson("aidebook-diagnostics.json", { type: "local-ui", version: status?.version ?? "0.1.0", externalConnections: false, exportedAt: new Date().toISOString() }); setToast("진단 예시를 내보냈습니다."); }
   function downloadJson(filename: string, value: unknown) { const blob = new Blob([JSON.stringify(value, null, 2)], { type: "application/json" }); const url = URL.createObjectURL(blob); const anchor = document.createElement("a"); anchor.href = url; anchor.download = filename; anchor.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000); }
 
-  return <div className={`shell ${sidebarHidden ? "sidebar-hidden" : ""} ${sidebarMobileOpen ? "sidebar-mobile-open" : ""} ${inspectorHidden ? "inspector-hidden" : ""}`}><aside className="sidebar" aria-label="주요 메뉴"><div className="brand"><Icon name="brand" /><span>Aidebook</span></div><nav className="main-nav" aria-label="주요 메뉴"><NavButton active={page === "home"} icon="work" onClick={() => navigate("home")}>최근 맥락</NavButton><NavButton active={page === "notes"} icon="notes" onClick={() => navigate("notes")}>모든 메모<span className="count">{notes.filter((note) => !note.retracted).length}</span></NavButton><NavButton active={page === "activity"} icon="activity" onClick={() => navigate("activity")}>활동 기록</NavButton><NavButton active={page === "graph"} icon="graph" onClick={() => navigate("graph")}>그래프<span className="count">{activeWorkNotes.length}</span></NavButton></nav><div className="works"><p className="navlabel">작업 묶음</p><div>{works.map((name, index) => <button className={`navbtn work ${page === "work" && work === index ? "active" : ""}`} type="button" key={name} aria-current={page === "work" && work === index ? "page" : undefined} onClick={() => chooseWork(index)}><span className="dot" /><span>{name}</span><span className="count">{notes.filter((note) => note.work === index && !note.retracted).length}</span></button>)}</div></div><div className="sidebar-bottom"><button className={`navbtn ${page === "connections" ? "active" : ""}`} type="button" onClick={() => navigate("connections")}><Icon name="link" />연결 상태<span className="count">1</span></button><button className={`navbtn ${page === "settings" ? "active" : ""}`} type="button" onClick={() => navigate("settings")}><Icon name="settings" />설정<span className="count">⌘ ,</span></button><div className="profile"><span className="avatar">나</span><div>개인 작업 공간<div className="small muted">이 기기에 보관</div></div></div></div></aside><main className="main" id="content"><header className="topbar"><button className="tool" type="button" aria-label="사이드바 접기 또는 펼치기" aria-expanded={!sidebarHidden} onClick={() => { if (window.innerWidth <= 760) setSidebarMobileOpen((open) => !open); else setSidebarHidden((hidden) => !hidden); }}><Icon name="panel-left" /></button><div className="crumb">{pageTitle()}</div><button className="search-launch" type="button" onClick={() => navigate("search")}><Icon name="search" />자료와 메모 검색 <kbd>⌘ K</kbd></button><span className="tag">예시 데이터</span><button className="tool inspector-toggle" type="button" aria-label="메모 근거 패널" aria-expanded={!inspectorHidden} onClick={() => setInspectorHidden((hidden) => !hidden)}><Icon name="panel-right" /></button></header><div id="view" tabIndex={-1}>{renderPage()}</div></main>{editor && <EditorModal />}{detail && <DetailModal />}{toast && <div className="toast" role="status">{toast}{undoStack.length > 0 && <button type="button" onClick={undoChange}>되돌리기</button>}</div>}</div>;
+  return <div className={`shell ${sidebarHidden ? "sidebar-hidden" : ""} ${sidebarMobileOpen ? "sidebar-mobile-open" : ""} ${inspectorHidden ? "inspector-hidden" : ""}`}><aside className="sidebar" aria-label="주요 메뉴"><div className="brand"><Icon name="brand" /><span>Aidebook</span></div><nav className="main-nav" aria-label="주요 메뉴"><NavButton active={page === "home"} icon="work" onClick={() => navigate("home")}>최근 맥락</NavButton><NavButton active={page === "notes"} icon="notes" onClick={() => navigate("notes")}>모든 메모<span className="count">{notes.filter((note) => !note.retracted).length}</span></NavButton><NavButton active={page === "activity"} icon="activity" onClick={() => navigate("activity")}>활동 기록</NavButton><NavButton active={page === "graph"} icon="graph" onClick={() => navigate("graph")}>그래프<span className="count">{activeWorkNotes.length}</span></NavButton></nav><div className="works"><p className="navlabel">작업 묶음</p><div>{works.map((name, index) => <button className={`navbtn work ${page === "work" && work === index ? "active" : ""}`} type="button" key={name} aria-current={page === "work" && work === index ? "page" : undefined} onClick={() => chooseWork(index)}><span className="dot" /><span>{name}</span><span className="count">{notes.filter((note) => note.work === index && !note.retracted).length}</span></button>)}</div></div><div className="sidebar-bottom"><button className={`navbtn ${page === "connections" ? "active" : ""}`} type="button" onClick={() => navigate("connections")}><Icon name="link" />연결 상태</button><button className={`navbtn ${page === "settings" ? "active" : ""}`} type="button" onClick={() => navigate("settings")}><Icon name="settings" />설정<span className="count">⌘ ,</span></button><div className="profile"><span className="avatar">나</span><div>개인 작업 공간<div className="small muted">이 기기에 보관</div></div></div></div></aside><main className="main" id="content"><header className="topbar"><button className="tool" type="button" aria-label="사이드바 접기 또는 펼치기" aria-expanded={!sidebarHidden} onClick={() => { if (window.innerWidth <= 760) setSidebarMobileOpen((open) => !open); else setSidebarHidden((hidden) => !hidden); }}><Icon name="panel-left" /></button><div className="crumb">{pageTitle()}</div><button className="search-launch" type="button" onClick={() => navigate("search")}><Icon name="search" />자료와 메모 검색 <kbd>⌘ K</kbd></button><span className="tag">예시 데이터</span><button className="tool inspector-toggle" type="button" aria-label="메모 근거 패널" aria-expanded={!inspectorHidden} onClick={() => setInspectorHidden((hidden) => !hidden)}><Icon name="panel-right" /></button></header><div id="view" tabIndex={-1}>{renderPage()}</div></main>{editor && <EditorModal />}{detail && <DetailModal />}{toast && <div className="toast" role="status">{toast}{undoStack.length > 0 && <button type="button" onClick={undoChange}>되돌리기</button>}</div>}</div>;
 
   function NavButton({ active, icon, onClick, children }: { active: boolean; icon: "work" | "notes" | "activity" | "graph"; onClick: () => void; children: ReactNode }) { return <button className={`navbtn ${active ? "active" : ""}`} type="button" aria-current={active ? "page" : undefined} onClick={onClick}><Icon name={icon} />{children}</button>; }
 

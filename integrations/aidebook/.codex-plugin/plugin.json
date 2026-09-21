@@ -1,0 +1,22 @@
+{
+  "name": "aidebook",
+  "version": "0.1.0",
+  "description": "Search connected notes and propose evidence-backed memories through the local Aidebook app.",
+  "author": {
+    "name": "Aidebook"
+  },
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Aidebook",
+    "shortDescription": "Local notes and reviewed memories",
+    "category": "Productivity",
+    "longDescription": "Search connected notes, inspect source evidence, and propose memories for review through the local Aidebook app.",
+    "developerName": "Aidebook",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": "Find related notes and reviewed memories in Aidebook."
+  }
+}

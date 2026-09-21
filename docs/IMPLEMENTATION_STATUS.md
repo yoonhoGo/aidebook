@@ -3,6 +3,42 @@
 기준: `docs/ROADMAP.md`와 두 원문 기획 노트의 구체적인 MVP 설계를 우선했다.
 이 문서는 단계별 구현·검증 경계를 기록하며, native/live 경계는 별도로 표시한다.
 
+## 에이전트 원클릭 연결 — 2026-09-22
+
+- 설정 → 에이전트 연결에서 Codex·Claude Code·Hermes의 사용자 스킬+MCP,
+  Pi의 스킬+확장 플러그인을 설치·갱신·해제하고 로컬 통신을 확인할 수 있다.
+- 앱 실행 파일에 UI를 띄우지 않는 MCP/호출 모드를 포함해 별도 CLI 설치를 제거했다.
+  절대 경로, 설치 기록, 충돌 검사, 백업, 다른 설정/사용자 수정 파일 보존을 구현했다.
+- Codex·Claude용 플러그인 번들도 생성한다. 기본 설치와 네이티브 플러그인
+  마켓플레이스 등록은 구분하며 후자는 자동 활성화하지 않는다.
+- 임시 home 설치 회귀와 실제 복사한 실행 파일의 IPC/MCP 왕복 통신,
+  Pi 확장 자식 프로세스 호출·취소를 검증했다. 실제 에이전트 대화와 배포 앱은 미검증이다.
+- 사용법과 공식 자료: [AGENT_CONNECTIONS.md](./AGENT_CONNECTIONS.md).
+
+## Obsidian 자동 갱신 — 2026-09-21
+
+- 앱 수명 동안 실행하는 Rust worker가 연결된 로컬 볼트를 시작 시 및 순회 완료 후
+  10초 간격으로 읽고, 추가·수정·삭제가 있으면 내부 관계 지도를 갱신한다.
+- 연결별 켜기/끄기 영구 저장, 수동/자동 읽기 중복 방지, 해제 후 대기 작업 차단,
+  재시작 중 누락된 삭제 반영, 실패한 경로의 캐시 보존과 다음 경로 처리를 구현했다.
+- 화면에서 마지막 확인/관계 갱신 시각과 오류를 표시한다. 원본에는 쓰지 않는다.
+- 임시 실제 파일·SQLite를 사용하는 `local_auto_sync` 통합 테스트를 통과했다.
+  사용자 볼트/iCloud와 native 앱에서의 지속 실행·절전 복귀는 아직 검증하지 않았다.
+- GitHub·Jira 자동 조회와 현재 열린 검색 결과/메인 3D 화면의 자동 재조회는 미구현이다.
+
+## 플러그인 다중 연결 — 2026-09-21
+
+- Obsidian → GitHub → Jira 순서의 연결 관리 화면, 연결별 UUID/계정/범위 저장·복원,
+  로컬 우선 전체 읽기, 연결별 해제와 토큰 삭제 분리.
+- GitHub 계정별 기존 gh 인증 재사용과 PAT, Jira Cloud 프로젝트별 개인 API token
+  읽기를 지원한다. native Security Framework로 Keychain에 접근한다.
+- 기존 단일 선택 범위는 새 폼으로 가져올 수 있으며 캐시·메모·Keychain을 보존한다.
+- 다중 경로·계정·재시작·Jira 페이지 처리 회귀 테스트, 기존 Rust 테스트,
+  frontend build/Vitest와 브라우저 폼 전환을 검증했다.
+- 실제 gh 인증 상태는 유효했으나, native Tauri 연결·실자료 갱신·Keychain
+  저장/삭제는 미검증이다. 내장 OAuth flow·Jira scoped token은 미구현이다.
+- 자세한 인증 재사용 판단과 공식 자료: [PLUGIN_CONNECTIONS.md](./PLUGIN_CONNECTIONS.md).
+
 ## M0 — 완료
 
 - Rust `Core` 공통 모델/API와 구조화 `CoreError` 추가
@@ -128,7 +164,7 @@ M1의 watcher는 재현 가능한 polling 구현이다. native FSEvents와 실�
 - `GitHubAdapter`가 이슈·pull request·댓글·상태·labels를 읽기 전용 snapshot으로
   변환하고 page cursor를 순회
 - `CredentialStore` 경계와 in-memory fixture store 추가; macOS에서는
-  `security` Keychain 명령의 stdin prompt로만 credential을 읽고 저장하며
+  native Security Framework API로 credential을 읽고 저장하며
   token을 argv·로그·SQLite에 두지 않음
 - 401/403/404/429/5xx·network·malformed 응답을 구조화 오류로 분류
 - `github_select`/`github_credential_set`/`github_refresh` Tauri command를 통해
