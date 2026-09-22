@@ -36,7 +36,7 @@ pub const LEGACY_IPC_METHODS: [&str; 6] = [
     "connections.status",
 ];
 
-pub const IPC_METHODS: [&str; 13] = [
+pub const IPC_METHODS: [&str; 19] = [
     "context.search",
     "context.get",
     "memory.upsert",
@@ -50,6 +50,12 @@ pub const IPC_METHODS: [&str; 13] = [
     "candidate.propose",
     "candidate.get",
     "candidate.list",
+    "plugins.list",
+    "plugins.get",
+    "plugins.add",
+    "plugins.update",
+    "plugins.remove",
+    "plugins.refresh",
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -131,6 +137,7 @@ pub struct IpcError {
 
 pub struct CoreServer {
     core: Core,
+    plugins: Option<Arc<super::local_sync::LocalSync>>,
     endpoint: CoreEndpoint,
     listener: UnixListener,
     lock_file: Option<File>,
@@ -245,10 +252,17 @@ impl CoreServer {
         set_user_only(&endpoint.socket_path)?;
         Ok(Self {
             core,
+            plugins: None,
             endpoint,
             listener,
             lock_file: Some(owner_lock.disarm()),
         })
+    }
+
+    /// Share the desktop registry and scan lock; never open a second settings owner.
+    pub fn with_plugins(mut self, plugins: Arc<super::local_sync::LocalSync>) -> Self {
+        self.plugins = Some(plugins);
+        self
     }
 
     pub fn endpoint(&self) -> &CoreEndpoint {
@@ -273,7 +287,10 @@ impl CoreServer {
                 Ok((stream, _)) => {
                     let core = self.core.clone();
                     let endpoint = self.endpoint.clone();
-                    thread::spawn(move || handle_connection(stream, &endpoint, &core));
+                    let plugins = self.plugins.clone();
+                    thread::spawn(move || {
+                        handle_connection(stream, &endpoint, &core, plugins.as_deref())
+                    });
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                     thread::sleep(Duration::from_millis(10));
@@ -345,7 +362,13 @@ impl CoreClient {
             }
         })?;
         stream
-            .set_read_timeout(Some(std::time::Duration::from_secs(15)))
+            .set_read_timeout(Some(std::time::Duration::from_secs(
+                if method.starts_with("plugins.") {
+                    120
+                } else {
+                    15
+                },
+            )))
             .map_err(|_| CoreError::Connector {
                 message: "IPC read timeout configuration failed".into(),
             })?;
@@ -480,11 +503,71 @@ pub fn dispatch(core: &Core, method: &str, params: Value) -> CoreResult<Value> {
     }
 }
 
-fn handle_connection(mut stream: UnixStream, endpoint: &CoreEndpoint, core: &Core) {
+fn dispatch_plugins(
+    plugins: &super::local_sync::LocalSync,
+    method: &str,
+    params: Value,
+) -> CoreResult<Value> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Id {
+        id: String,
+    }
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Update {
+        id: String,
+        changes: super::plugins::ConnectionPatch,
+    }
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Empty {}
+    match method {
+        "plugins.list" => {
+            let _: Empty = serde_json::from_value(params).map_err(invalid_params)?;
+            serde_json::to_value(plugins.connections()?).map_err(serialize_error)
+        }
+        "plugins.add" => {
+            let input = serde_json::from_value(params).map_err(invalid_params)?;
+            serde_json::to_value(plugins.add(input)?).map_err(serialize_error)
+        }
+        "plugins.update" => {
+            let input: Update = serde_json::from_value(params).map_err(invalid_params)?;
+            serde_json::to_value(plugins.update(&input.id, input.changes)?).map_err(serialize_error)
+        }
+        "plugins.get" | "plugins.remove" | "plugins.refresh" => {
+            let input: Id = serde_json::from_value(params).map_err(invalid_params)?;
+            match method {
+                "plugins.get" => {
+                    serde_json::to_value(plugins.connection(&input.id)?).map_err(serialize_error)
+                }
+                "plugins.refresh" => serde_json::to_value(plugins.refresh(&input.id, false)?)
+                    .map_err(serialize_error),
+                _ => {
+                    plugins.remove(&input.id)?;
+                    Ok(
+                        serde_json::json!({"id":input.id,"removed":true,"cache_preserved":true,"credentials_preserved":true}),
+                    )
+                }
+            }
+        }
+        _ => Err(CoreError::InvalidInput {
+            field: "method".into(),
+            message: "unsupported plugin method".into(),
+        }),
+    }
+}
+
+fn handle_connection(
+    mut stream: UnixStream,
+    endpoint: &CoreEndpoint,
+    core: &Core,
+    plugins: Option<&super::local_sync::LocalSync>,
+) {
     let mut line = String::new();
     let response = match BufReader::new(&mut stream).read_line(&mut line) {
         Ok(_) => match serde_json::from_str::<IpcRequest>(&line) {
-            Ok(request) => authenticate_and_dispatch(endpoint, core, request),
+            Ok(request) => authenticate_and_dispatch(endpoint, core, request, plugins),
             Err(error) => error_response(
                 "invalid_request",
                 format!("invalid IPC request: {error}"),
@@ -506,6 +589,7 @@ fn authenticate_and_dispatch(
     endpoint: &CoreEndpoint,
     core: &Core,
     request: IpcRequest,
+    plugins: Option<&super::local_sync::LocalSync>,
 ) -> IpcResponse {
     let token = match endpoint.read_token() {
         Ok(token) => token,
@@ -518,7 +602,21 @@ fn authenticate_and_dispatch(
             None,
         );
     }
-    match dispatch(core, &request.method, request.params) {
+    let result = if request.method.starts_with("plugins.") {
+        plugins
+            .ok_or_else(|| CoreError::Provider {
+                provider: "plugins".into(),
+                code: "unavailable".into(),
+                message:
+                    "this Core owner has no connection registry; restart the updated desktop app"
+                        .into(),
+                retry_at: None,
+            })
+            .and_then(|plugins| dispatch_plugins(plugins, &request.method, request.params))
+    } else {
+        dispatch(core, &request.method, request.params)
+    };
+    match result {
         Ok(result) => IpcResponse {
             id: request.id,
             result: Some(result),

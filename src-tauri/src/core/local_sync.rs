@@ -1,6 +1,6 @@
 //! App-lifetime, read-only polling for all explicitly connected local vaults.
 use super::{
-    plugins::{PluginConnection, PluginRegistry, Provider},
+    plugins::{ConnectionPatch, PluginConnection, PluginRegistry, Provider},
     *,
 };
 use serde::Serialize;
@@ -49,6 +49,31 @@ impl LocalSync {
             statuses: Mutex::new(HashMap::new()),
         }
     }
+    pub fn connections(&self) -> CoreResult<Vec<PluginConnection>> {
+        Ok(self.registry.lock().map_err(|_| unavailable())?.list())
+    }
+    pub fn connection(&self, id: &str) -> CoreResult<PluginConnection> {
+        self.registry.lock().map_err(|_| unavailable())?.get(id)
+    }
+    pub fn add(&self, connection: PluginConnection) -> CoreResult<PluginConnection> {
+        let _guard = self.operation.lock().map_err(|_| unavailable())?;
+        self.registry
+            .lock()
+            .map_err(|_| unavailable())?
+            .add(connection)
+    }
+    pub fn update(&self, id: &str, patch: ConnectionPatch) -> CoreResult<PluginConnection> {
+        let mut ready = self.operation.lock().map_err(|_| unavailable())?;
+        let connection = self
+            .registry
+            .lock()
+            .map_err(|_| unavailable())?
+            .update(id, patch)?;
+        // The next scan must rebuild relations for a changed scope, even when content matches.
+        ready.remove(id);
+        self.statuses.lock().map_err(|_| unavailable())?.remove(id);
+        Ok(connection)
+    }
     pub fn statuses(&self) -> CoreResult<Vec<LocalSyncStatus>> {
         Ok(self
             .statuses
@@ -66,11 +91,16 @@ impl LocalSync {
             .set_auto_sync(id, enabled)
     }
     pub fn remove(&self, id: &str) -> CoreResult<()> {
+        self.remove_with_credentials(id, false)
+    }
+    pub fn remove_with_credentials(&self, id: &str, delete_credential: bool) -> CoreResult<()> {
         let mut ready = self.operation.lock().map_err(|_| unavailable())?;
-        self.registry
-            .lock()
-            .map_err(|_| unavailable())?
-            .remove(id)?;
+        let mut registry = self.registry.lock().map_err(|_| unavailable())?;
+        let connection = registry.get(id)?;
+        if delete_credential && connection.auth == plugins::AuthMethod::Token {
+            KeychainCredentialStore.delete(&plugins::credential_key(id))?;
+        }
+        registry.remove(id)?;
         ready.remove(id);
         self.statuses.lock().map_err(|_| unavailable())?.remove(id);
         Ok(())
@@ -104,6 +134,9 @@ impl LocalSync {
         let mut ready = self.operation.lock().map_err(|_| unavailable())?;
         // Recheck after taking the operation lock: removed/paused paths cannot start a stale queued scan.
         let connection = self.registry.lock().map_err(|_| unavailable())?.get(id)?;
+        if !automatic && connection.provider != Provider::Obsidian {
+            return plugins::refresh(&self.core, connection);
+        }
         if connection.provider != Provider::Obsidian || (automatic && !connection.auto_sync) {
             return Err(CoreError::InvalidInput {
                 field: "connection".into(),

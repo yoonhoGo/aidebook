@@ -57,8 +57,13 @@ export default function PluginsPanel() {
     let timer: ReturnType<typeof setTimeout>;
     async function poll() {
       try {
-        const result = await invoke<SyncStatus[]>("plugin_sync_status");
-        if (!cancelled) setSyncStatuses(Object.fromEntries(result.map(s => [s.id, s])));
+        const [result, saved] = await Promise.all([
+          invoke<SyncStatus[]>("plugin_sync_status"), invoke<Connection[]>("plugin_list"),
+        ]);
+        if (!cancelled) {
+          setSyncStatuses(Object.fromEntries(result.map(s => [s.id, s])));
+          setConnections(saved);
+        }
       } catch { /* Connection actions surface errors; the next status poll retries. */ }
       if (!cancelled) timer = setTimeout(() => void poll(), 2000);
     }

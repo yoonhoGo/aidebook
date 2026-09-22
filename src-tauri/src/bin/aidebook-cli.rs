@@ -54,6 +54,28 @@ fn run_cli(args: &[String]) -> Result<Value, CoreError> {
     }
     let method = method_from_command(args)?;
     let params = match method.as_str() {
+        "plugins.list" => json!({}),
+        "plugins.get" | "plugins.remove" | "plugins.refresh" => json!({"id": required_flag(args, "--id")?}),
+        "plugins.add" => {
+            let provider = required_flag(args, "--provider")?;
+            let auth = flag_value(args, "--auth").unwrap_or_else(|| match provider.as_str() {
+                "obsidian" => "local", "github" => "gh_cli", _ => "token",
+            }.into());
+            json!({"id":required_flag(args,"--id")?, "label":required_flag(args,"--label")?,
+                "scope":required_flag(args,"--scope")?, "provider":provider, "auth":auth,
+                "account":flag_value(args,"--account").unwrap_or_default(),
+                "project":flag_value(args,"--project").unwrap_or_default(),
+                "auto_sync":bool_flag(args,"--auto-sync")?.unwrap_or(true)})
+        }
+        "plugins.update" => {
+            let mut changes = serde_json::Map::new();
+            for key in ["label", "scope", "account", "project", "auth"] {
+                if let Some(value) = flag_value(args, &format!("--{key}")) { changes.insert(key.into(), json!(value)); }
+            }
+            if let Some(value) = bool_flag(args, "--auto-sync")? { changes.insert("auto_sync".into(), json!(value)); }
+            if changes.is_empty() { return Err(usage("plugins update requires changed fields or --params JSON")); }
+            json!({"id":required_flag(args,"--id")?,"changes":changes})
+        }
         "context.search" => json!({
             "query": required_flag(args, "--query")?,
             "provider": flag_value(args, "--provider"),
@@ -100,6 +122,15 @@ fn run_cli(args: &[String]) -> Result<Value, CoreError> {
 fn method_from_command(args: &[String]) -> Result<String, CoreError> {
     let method =
         match args.first().map(String::as_str) {
+            Some("plugins") => match args.get(1).map(String::as_str) {
+                Some("list") => "plugins.list",
+                Some("get") => "plugins.get",
+                Some("add") => "plugins.add",
+                Some("update") => "plugins.update",
+                Some("remove") => "plugins.remove",
+                Some("refresh") => "plugins.refresh",
+                _ => return Err(usage("plugins list|get|add|update|remove|refresh")),
+            },
             Some("context") => match args.get(1).map(String::as_str) {
                 Some("search") => "context.search",
                 Some("get") => "context.get",
@@ -130,13 +161,19 @@ fn method_from_command(args: &[String]) -> Result<String, CoreError> {
                 "connections.status"
             }
             _ => return Err(usage(
-                "context search|get|query, memory upsert|retract, observation capture|get, candidate distill|get|list|propose, sources refresh, or connections status",
+                "context search|get|query, memory upsert|retract, observation capture|get, candidate distill|get|list|propose, sources refresh, connections status, or plugins list|get|add|update|remove|refresh",
             )),
         };
     Ok(method.to_string())
 }
 
 fn client_from_args(args: &[String]) -> Result<CoreClient, CoreError> {
+    if let Some(data_dir) = flag_value(args, "--data-dir") {
+        if flag_value(args, "--socket").is_some() || flag_value(args, "--token-file").is_some() {
+            return Err(usage("use --data-dir or --socket/--token-file, not both"));
+        }
+        return CoreClient::from_endpoint(CoreEndpoint::in_data_dir(data_dir));
+    }
     let endpoint = match (
         flag_value(args, "--socket"),
         flag_value(args, "--token-file"),
@@ -154,6 +191,15 @@ fn client_from_args(args: &[String]) -> Result<CoreClient, CoreError> {
         }
     };
     CoreClient::from_endpoint(endpoint)
+}
+
+fn bool_flag(args: &[String], flag: &str) -> Result<Option<bool>, CoreError> {
+    match flag_value(args, flag).as_deref() {
+        Some("true") => Ok(Some(true)),
+        Some("false") => Ok(Some(false)),
+        None if !args.iter().any(|arg| arg == flag) => Ok(None),
+        _ => Err(usage(&format!("{flag} must be true or false"))),
+    }
 }
 
 fn flag_value(args: &[String], flag: &str) -> Option<String> {

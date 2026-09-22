@@ -19,7 +19,8 @@ try {
   const definitions=[];
   const extension=(await import(pathToFileURL(join(root,'extension.mjs')))).default;
   extension({registerTool:tool=>definitions.push(tool)});
-  assert.equal(definitions.length,13);
+  assert.equal(definitions.length,tools.length);
+  assert(definitions.some(t=>t.name==='aidebook_plugins_update'));
   assert(!definitions.some(t=>t.name==='aidebook_candidate_accept'));
   const search=definitions.find(t=>t.name==='aidebook_context_search');
   const params={query:'한글 본문 $(never-execute) `literal` "quoted"'};
@@ -31,5 +32,5 @@ try {
   const pending=search.execute('cancel',{wait:true},controller.signal);
   controller.abort();
   await assert.rejects(pending,/cancelled/);
-  console.log('Pi extension: 13 tools, argument isolation, Unicode and cancellation passed (temporary process harness).');
+  console.log(`Pi extension: ${definitions.length} tools, argument isolation, Unicode and cancellation passed (temporary process harness).`);
 } finally {await rm(root,{recursive:true,force:true});}

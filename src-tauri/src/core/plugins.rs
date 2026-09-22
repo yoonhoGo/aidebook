@@ -28,6 +28,7 @@ pub enum AuthMethod {
     Token,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PluginConnection {
     pub id: String,
     pub provider: Provider,
@@ -40,6 +41,17 @@ pub struct PluginConnection {
     pub auth: AuthMethod,
     #[serde(default = "default_auto_sync")]
     pub auto_sync: bool,
+}
+/// Partial edits preserve the connection identity and unspecified fields.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectionPatch {
+    pub label: Option<String>,
+    pub account: Option<String>,
+    pub scope: Option<String>,
+    pub project: Option<String>,
+    pub auth: Option<AuthMethod>,
+    pub auto_sync: Option<bool>,
 }
 fn default_auto_sync() -> bool {
     true
@@ -62,6 +74,9 @@ fn segment(s: &str) -> bool {
 }
 impl PluginConnection {
     pub fn validate(&mut self) -> CoreResult<()> {
+        self.validate_scope(true)
+    }
+    fn validate_scope(&mut self, resolve_local_path: bool) -> CoreResult<()> {
         if !segment(&self.id) || self.label.trim().is_empty() {
             return Err(invalid("connection ID and label are required"));
         }
@@ -73,9 +88,11 @@ impl PluginConnection {
                 if self.auth != AuthMethod::Local {
                     return Err(invalid("local paths do not require authentication"));
                 }
-                let adapter =
-                    ObsidianAdapter::open(VaultConfig::new(&self.scope, &self.id, &self.id))?;
-                self.scope = adapter.root_path().to_string_lossy().into_owned();
+                if resolve_local_path {
+                    let adapter =
+                        ObsidianAdapter::open(VaultConfig::new(&self.scope, &self.id, &self.id))?;
+                    self.scope = adapter.root_path().to_string_lossy().into_owned();
+                }
             }
             Provider::Github => {
                 if !matches!(self.auth, AuthMethod::GhCli | AuthMethod::Token)
@@ -163,6 +180,34 @@ impl PluginRegistry {
         }
         let mut next = self.connections.clone();
         next.push(connection.clone());
+        self.persist(next)?;
+        Ok(connection)
+    }
+    pub fn update(&mut self, id: &str, patch: ConnectionPatch) -> CoreResult<PluginConnection> {
+        let mut connection = self.get(id)?;
+        let scope_changed = patch.scope.is_some();
+        if let Some(value) = patch.label {
+            connection.label = value;
+        }
+        if let Some(value) = patch.account {
+            connection.account = value;
+        }
+        if let Some(value) = patch.scope {
+            connection.scope = value;
+        }
+        if let Some(value) = patch.project {
+            connection.project = value;
+        }
+        if let Some(value) = patch.auth {
+            connection.auth = value;
+        }
+        if let Some(value) = patch.auto_sync {
+            connection.auto_sync = value;
+        }
+        // Metadata/pause edits must work even while an existing vault is offline.
+        connection.validate_scope(scope_changed)?;
+        let mut next = self.connections.clone();
+        *next.iter_mut().find(|c| c.id == id).unwrap() = connection.clone();
         self.persist(next)?;
         Ok(connection)
     }

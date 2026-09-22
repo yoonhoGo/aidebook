@@ -36,11 +36,54 @@ struct JsonRpcError {
     data: Option<Value>,
 }
 
+fn connection_properties() -> Value {
+    json!({
+        "id":{"type":"string","description":"Stable unique connection ID; use a new ID to add another vault/account."},
+        "provider":{"type":"string","enum":["obsidian","github","jira"]},
+        "label":{"type":"string"},
+        "account":{"type":"string","description":"Empty for Obsidian, GitHub login or Jira email."},
+        "scope":{"type":"string","description":"Absolute vault path, owner/repository, or https://tenant.atlassian.net."},
+        "project":{"type":"string","description":"Required Jira project key; otherwise empty."},
+        "auth":{"type":"string","enum":["local","gh_cli","token"]},
+        "auto_sync":{"type":"boolean","default":true,"description":"Automatic refresh applies to local Obsidian vaults only."}
+    })
+}
+
 pub fn tool_descriptors() -> Vec<Value> {
     IPC_METHODS
         .iter()
         .map(|name| {
             let (description, properties, required) = match *name {
+                "plugins.list" => (
+                    "List saved Aidebook source connections (Obsidian, GitHub, Jira), without credentials.",
+                    json!({}), Vec::new(),
+                ),
+                "plugins.get" => (
+                    "Read one saved source connection by its stable ID, without credentials.",
+                    json!({"id":{"type":"string"}}), vec!["id"],
+                ),
+                "plugins.add" => (
+                    "Add an explicitly requested source connection without replacing existing connections. This configures built-in providers; it does not install executable plugins. Tokens must be set in the app.",
+                    connection_properties(), vec!["id","provider","label","account","scope","auth"],
+                ),
+                "plugins.update" => {
+                    let mut properties = connection_properties();
+                    properties.as_object_mut().unwrap().remove("id");
+                    properties.as_object_mut().unwrap().remove("provider");
+                    (
+                        "Partially edit an explicitly selected connection. ID/provider and omitted fields are preserved. Does not change stored credentials.",
+                        json!({"id":{"type":"string"}, "changes":{"type":"object","properties":properties,"additionalProperties":false}}),
+                        vec!["id","changes"],
+                    )
+                },
+                "plugins.remove" => (
+                    "Disconnect the explicitly selected source connection and stop its automatic refresh. Preserve source files, cached evidence, memories and credentials.",
+                    json!({"id":{"type":"string"}}), vec!["id"],
+                ),
+                "plugins.refresh" => (
+                    "Read and index the actual saved vault/repository/project using its existing authentication. Does not write to source files or remote providers.",
+                    json!({"id":{"type":"string"}}), vec!["id"],
+                ),
                 "context.search" => (
                     "Search indexed source snapshots through the local Core.",
                     json!({
@@ -180,7 +223,7 @@ pub fn tool_descriptors() -> Vec<Value> {
                     "type": "object",
                     "properties": properties,
                     "required": required,
-                    "additionalProperties": true
+                    "additionalProperties": !name.starts_with("plugins.")
                 }
             })
         })

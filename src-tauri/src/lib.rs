@@ -129,11 +129,7 @@ async fn agent_connection_probe(
 fn plugin_list(
     state: State<'_, AppState>,
 ) -> Result<Vec<core::plugins::PluginConnection>, CoreError> {
-    Ok(state
-        .plugins
-        .lock()
-        .map_err(|_| plugin_lock_error())?
-        .list())
+    state.local_sync.connections()
 }
 fn plugin_lock_error() -> CoreError {
     CoreError::Connector {
@@ -141,15 +137,25 @@ fn plugin_lock_error() -> CoreError {
     }
 }
 #[tauri::command]
-fn plugin_add(
+async fn plugin_add(
     input: core::plugins::PluginConnection,
     state: State<'_, AppState>,
 ) -> Result<core::plugins::PluginConnection, CoreError> {
-    state
-        .plugins
-        .lock()
+    let local_sync = state.local_sync.clone();
+    tauri::async_runtime::spawn_blocking(move || local_sync.add(input))
+        .await
         .map_err(|_| plugin_lock_error())?
-        .add(input)
+}
+#[tauri::command]
+async fn plugin_update(
+    id: String,
+    changes: core::plugins::ConnectionPatch,
+    state: State<'_, AppState>,
+) -> Result<core::plugins::PluginConnection, CoreError> {
+    let local_sync = state.local_sync.clone();
+    tauri::async_runtime::spawn_blocking(move || local_sync.update(&id, changes))
+        .await
+        .map_err(|_| plugin_lock_error())?
 }
 #[tauri::command]
 async fn plugin_remove(
@@ -157,22 +163,14 @@ async fn plugin_remove(
     delete_credential: bool,
     state: State<'_, AppState>,
 ) -> Result<(), CoreError> {
-    let registry = state.plugins.clone();
     let local_sync = state.local_sync.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let connection = registry.lock().map_err(|_| plugin_lock_error())?.get(&id)?;
-        if connection.provider == core::plugins::Provider::Obsidian {
-            return local_sync.remove(&id);
-        }
-        let mut registry = registry.lock().map_err(|_| plugin_lock_error())?;
-        if delete_credential && connection.auth == core::plugins::AuthMethod::Token {
-            KeychainCredentialStore.delete(&core::plugins::credential_key(&id))?;
-        }
-        registry.remove(&id)
+        local_sync.remove_with_credentials(&id, delete_credential)
     })
     .await
     .map_err(|_| plugin_lock_error())?
 }
+
 #[tauri::command]
 fn plugin_sync_status(
     state: State<'_, AppState>,
@@ -208,22 +206,10 @@ async fn plugin_refresh(
     id: String,
     state: State<'_, AppState>,
 ) -> Result<SourcesRefreshResult, CoreError> {
-    let connection = state
-        .plugins
-        .lock()
-        .map_err(|_| plugin_lock_error())?
-        .get(&id)?;
-    let core = state.core.clone();
     let local_sync = state.local_sync.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        if connection.provider == core::plugins::Provider::Obsidian {
-            local_sync.refresh(&id, false)
-        } else {
-            core::plugins::refresh(&core, connection)
-        }
-    })
-    .await
-    .map_err(|_| plugin_lock_error())?
+    tauri::async_runtime::spawn_blocking(move || local_sync.refresh(&id, false))
+        .await
+        .map_err(|_| plugin_lock_error())?
 }
 
 #[tauri::command]
@@ -632,11 +618,6 @@ pub fn run() {
             let server = CoreServer::bind(endpoint.clone(), core.clone(), None)
                 .map_err(|error| Box::new(error) as Box<dyn std::error::Error>)?;
             let core_stop = Arc::new(AtomicBool::new(false));
-            let core_stop_for_server = core_stop.clone();
-            std::thread::spawn(move || {
-                let _ = server.serve_until(core_stop_for_server);
-            });
-            app.manage(endpoint);
             let plugins = Arc::new(Mutex::new(core::plugins::PluginRegistry::open(
                 data_dir.join("connections.json"),
             )?));
@@ -644,6 +625,12 @@ pub fn run() {
                 core.clone(),
                 plugins.clone(),
             ));
+            let server = server.with_plugins(local_sync.clone());
+            let core_stop_for_server = core_stop.clone();
+            std::thread::spawn(move || {
+                let _ = server.serve_until(core_stop_for_server);
+            });
+            app.manage(endpoint);
             let background_sync = local_sync.clone();
             let sync_stop = core_stop.clone();
             std::thread::spawn(move || background_sync.run(sync_stop));
@@ -673,6 +660,7 @@ pub fn run() {
             plugin_sync_status,
             plugin_sync_configure,
             plugin_add,
+            plugin_update,
             plugin_remove,
             plugin_token_set,
             plugin_refresh,

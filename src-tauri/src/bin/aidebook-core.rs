@@ -1,5 +1,9 @@
+use aidebook_lib::core::{local_sync::LocalSync, plugins::PluginRegistry};
 use aidebook_lib::core::{Core, CoreEndpoint, CoreError, CoreServer};
-use std::env;
+use std::{
+    env,
+    sync::{atomic::AtomicBool, Arc, Mutex},
+};
 
 fn main() {
     if let Err(error) = run() {
@@ -18,7 +22,16 @@ fn run() -> Result<(), CoreError> {
         token_path: token_file.into(),
     };
     let core = Core::open(db)?;
-    let server = CoreServer::bind(endpoint, core, None)?;
+    let server = CoreServer::bind(endpoint.clone(), core.clone(), None)?;
+    let registry_path = endpoint
+        .socket_path
+        .parent()
+        .unwrap_or(std::path::Path::new("."))
+        .join("connections.json");
+    let registry = Arc::new(Mutex::new(PluginRegistry::open(registry_path)?));
+    let sync = Arc::new(LocalSync::new(core, registry));
+    let server = server.with_plugins(sync.clone());
+    std::thread::spawn(move || sync.run(Arc::new(AtomicBool::new(false))));
     server.serve()
 }
 

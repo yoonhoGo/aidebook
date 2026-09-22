@@ -91,7 +91,7 @@ Atlassian은 배포용 cloud integration에 3LO를 권장한다. API token 수�
   GitHub 로그인 계정은 새로 지정해야 한다. 기존 Tauri 단일 연결 명령은 호환용으로
   남겼고 새 연결 화면은 `plugin_*` 명령을 사용한다.
 - Obsidian 다중 연결은 아래 자동 갱신을 지원한다. GitHub·Jira는 수동 읽기다.
-  CLI/MCP 연결 관리와 자체 OAuth 로그인/refresh flow는 아직 구현하지 않았다.
+  CLI/MCP 연결 관리는 아래 명령으로 지원한다. 자체 OAuth 로그인/refresh flow는 아직 미구현이다.
 - DB 백업은 `connections.json`과 Keychain을 포함하지 않는다.
 - 브라우저 미리보기는 실제 연결 저장·토큰 저장을 차단한다.
 
@@ -121,3 +121,74 @@ Atlassian은 배포용 cloud integration에 3LO를 권장한다. API token 수�
 - [Jira 이메일 + API token 인증 및 배포 제약](https://developer.atlassian.com/cloud/jira/platform/basic-auth-for-rest-apis/)
 - [Atlassian API token과 scoped token URL](https://support.atlassian.com/atlassian-account/docs/manage-api-tokens-for-your-atlassian-account)
 - [Jira enhanced JQL search](https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issue-search/)
+
+
+## MCP / CLI 연결 관리 — 2026-09-22
+
+앱·MCP·CLI는 Core owner의 같은 `connections.json` registry와 동기화 잠금을 사용한다.
+여기서 플러그인은 내장 Obsidian/GitHub/Jira의 연결 인스턴스다. 실행 코드를 설치하거나
+Codex 플러그인 패키지를 삭제하는 기능은 아니다.
+
+| MCP | CLI | 동작 |
+| --- | --- | --- |
+| `plugins.list` | `plugins list` | 저장된 연결 목록 |
+| `plugins.get` | `plugins get --id ID` | 한 연결의 설정 |
+| `plugins.add` | `plugins add` | 고유 ID로 새 연결 추가; 중복 ID는 거부 |
+| `plugins.update` | `plugins update --id ID` | 지정한 필드만 수정; ID/provider 고정 |
+| `plugins.remove` | `plugins remove --id ID` | 해당 연결 해제; 캐시·메모·원본·인증 보존 |
+| `plugins.refresh` | `plugins refresh --id ID` | 실제 저장된 경로/저장소/프로젝트 읽기 |
+
+앱을 실행한 뒤 아래처럼 사용한다. 개발 빌드 CLI는 `src-tauri/target/debug/aidebook-cli`다.
+`--data-dir`는 `--socket`/`--token-file` 쌍 또는 기존 IPC 환경 변수 대신 사용할 수 있다.
+
+```sh
+AIDEBOOK_DATA_DIR="$HOME/Library/Application Support/com.yoonhogo.aidebook"
+aidebook-cli plugins list --data-dir "$AIDEBOOK_DATA_DIR"
+aidebook-cli plugins add --data-dir "$AIDEBOOK_DATA_DIR" \
+  --id bbros --provider obsidian --label bbros \
+  --scope "$HOME/Library/Mobile Documents/iCloud~md~obsidian/Documents/bbros"
+aidebook-cli plugins update --data-dir "$AIDEBOOK_DATA_DIR" \
+  --id bbros --label '회사 노트' --auto-sync false
+aidebook-cli plugins refresh --data-dir "$AIDEBOOK_DATA_DIR" --id bbros
+aidebook-cli plugins get --data-dir "$AIDEBOOK_DATA_DIR" --id bbros
+# 실제로 해제할 때만 실행:
+aidebook-cli plugins remove --data-dir "$AIDEBOOK_DATA_DIR" --id bbros
+```
+
+MCP `plugins.add` 인수는 `id, provider, label, account, scope, auth`를 포함한다.
+Obsidian은 `account: ""`, `auth: "local"`; 선택적 `auto_sync` 기본값은 true다.
+CLI는 Obsidian/local, GitHub/gh_cli, Jira/token을 기본 인증 방식으로 사용한다.
+GitHub는 `--account LOGIN --scope OWNER/REPO`, Jira는 `--account EMAIL
+--scope https://TENANT.atlassian.net --project KEY`가 필요하다.
+토큰 자체는 앱에서 저장하며 도구 인수로 받지 않는다.
+
+부분 수정의 MCP 인수 및 CLI `--params`는 같은 형태다:
+
+```json
+{"id":"bbros","changes":{"label":"회사 노트","auto_sync":false}}
+```
+
+`--params`를 사용하면 해당 JSON이 일반 필드 옵션을 대체한다. 수정 가능한 필드는
+`label/account/scope/project/auth/auto_sync`다. GitHub·Jira의 auto_sync는 자동 조회를
+활성화하지 않으며 현재 로컬 vault에만 적용된다. 인증 방식/계정을 바꾸어도 기존
+Keychain 항목은 자동 변경하지 않는다. 필요한 인증은 앱에서 설정한다.
+연결 해제는 재추가로 복구할 수 있고 원본 문서는 변경하지 않는다.
+
+자동 갱신/수동 읽기와 수정/해제는 직렬화한다. 경로 수정 후 다음 읽기부터 새 경로를
+사용한다. 연결 관리 요청의 IPC 응답 대기는 120초이며 시간 초과가 작업 취소를
+뜻하지는 않는다. 재시도 전 `plugins.get/list`와 `connections.status`로 확인한다.
+앱 연결 화면은 외부 변경을 2초 간격으로 다시 읽는다.
+
+기존 설치는 업데이트한 앱을 실행하고 설정 → 에이전트 연결에서 설치/갱신한 뒤
+에이전트의 새 세션을 시작한다. 앱 Core와 복사된 MCP 실행 파일 모두 새 버전이어야 한다.
+앱 내장 CLI도 `--aidebook-agent call plugins.list --data-dir DIR`로 사용할 수 있으며
+JSON 인수는 stdin으로 전달한다. `describe`로 현재 도구 목록을 확인할 수 있다.
+
+검증: 임시 실제 vault와 SQLite, 인증 Unix socket, CLI/MCP 자식 프로세스로 다중 연결,
+부분 수정·재시작 복원·경로 변경 후 읽기·해제 후 수집 중단·캐시 보존·실패 시 설정 보존을
+검증한다. 실제 원격 계정/Keychain 변경은 별도 검증 경계다.
+
+2026-09-22 실사용 확인: release 앱과 설치된 Codex bridge를 갱신했다. 기존 개인 vault를
+유지하고 CLI로 bbros를 추가했으며, 설치된 MCP `plugins.list/refresh`로 두 연결과 bbros
+732개 색인·접근 불가 0개를 확인했다. native 연결 화면에서도 두 vault의 자동 갱신이
+표시되었다. 위 수치는 해당 시점의 검증 결과다. Codex의 새 대화에서 새 도구 목록을 불러온다.

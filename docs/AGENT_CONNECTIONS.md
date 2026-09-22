@@ -44,9 +44,10 @@ IPC 읽기/쓰기에는 15초 제한, 연결 검사에는 10초 제한, Pi 호�
 ## 스킬과 도구
 
 공통 스킬은 `integrations/aidebook/skills/aidebook-memory/SKILL.md`에서 관리한다.
-현재 13개 도구는 기존 Core의 whitelist/schema를 공유한다. Pi는 동일한 도구 이름의
+현재 19개 도구는 기존 Core의 whitelist/schema를 공유한다. Pi는 동일한 도구 이름의
 점을 밑줄로 치환하고 `aidebook_` 접두사를 붙인다.
 
+- `plugins.list/get/add/update/remove/refresh`: 내장 공급자의 다중 연결 관리와 실제 자료 갱신
 - 자료 검색, 전체 맥락 조회, 근거 확인, freshness/접근 상태 확인
 - 명시적 요청에 따른 관찰 → 후보 추출 → 제안
 - 명시적 메모 쓰기/철회와 연결 상태 조회
@@ -88,7 +89,7 @@ Codex·Claude에서 네이티브 플러그인 형태로 따로 등록하려면 �
   파싱 실패 시 무변경, 사용자 수정 스킬 보존.
 - 실제 복사한 앱 실행 파일 + 임시 CoreServer: probe, MCP initialize/tools/list/search,
   Pi용 stdin 호출, 승인 API 거부, 앱 종료 후 도구 목록 응답.
-- `scripts/test-agent-extension.mjs`: 확장 등록 13개, 실제 자식 프로세스 전달,
+- `scripts/test-agent-extension.mjs`: 확장 등록 19개, 실제 자식 프로세스 전달,
   공백/한글/셸 표현식의 인수 보존, 취소를 임시 실행 환경에서 검증.
 - skill-creator와 plugin-creator validator, Claude Code plugin validator 사용.
 - frontend build·Vitest와 전체 Rust 테스트 통과. 브라우저에서 설정 → 에이전트 연결의

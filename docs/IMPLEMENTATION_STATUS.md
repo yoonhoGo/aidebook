@@ -3,6 +3,22 @@
 기준: `docs/ROADMAP.md`와 두 원문 기획 노트의 구체적인 MVP 설계를 우선했다.
 이 문서는 단계별 구현·검증 경계를 기록하며, native/live 경계는 별도로 표시한다.
 
+## MCP·CLI 플러그인 연결 관리 — 2026-09-22
+
+- `plugins.list/get/add/update/remove/refresh` 6개 도구와 CLI 하위 명령 추가.
+- 기존 다중 연결 registry를 앱·IPC가 공유하며, 부분 수정 검증과 원자적 저장,
+  읽기/수정/해제 직렬화, 다음 스캔의 범위 재확인과 관계 갱신을 적용했다.
+- 해제 시 캐시·메모·원본·Keychain 보존. 토큰은 에이전트 인수에 노출하지 않는다.
+- 앱 연결 목록은 외부 변경도 재조회한다. standalone Core owner도 같은 API를 제공한다.
+- 임시 vault/SQLite 및 실제 CLI·MCP 프로세스 통합 테스트 4개 통과.
+- 전체 Rust 테스트, frontend build/Vitest 7개, Pi 확장 19개 등록/호출,
+  Core/CLI/MCP smoke, release app bundle build를 통과했다.
+- 실제 배포 번들을 실행해 Codex 설치 스킬·MCP를 갱신하고 19개 도구 통신을 확인했다.
+  기존 개인 vault를 유지하며 CLI로 bbros를 추가, 설치된 MCP로 732개 문서 색인
+  (접근 불가 0개), native 화면에서 개인 1,136개/bbros 732개 자동 갱신을 확인했다.
+  GitHub/Jira 실계정 CRUD·인증 변경과 장시간/절전 복귀 동작은 이번에 검증하지 않았다.
+- 사용법: [PLUGIN_CONNECTIONS.md](./PLUGIN_CONNECTIONS.md).
+
 ## 에이전트 원클릭 연결 — 2026-09-22
 
 - 설정 → 에이전트 연결에서 Codex·Claude Code·Hermes의 사용자 스킬+MCP,

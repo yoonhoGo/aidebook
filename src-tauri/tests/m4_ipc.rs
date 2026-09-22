@@ -64,7 +64,10 @@ fn cli_and_mcp_protocols_share_one_authenticated_core_owner() {
         .expect("MCP tools response"),
     )
     .expect("tools JSON");
-    assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 13);
+    assert_eq!(
+        tools["result"]["tools"].as_array().unwrap().len(),
+        aidebook_lib::core::IPC_METHODS.len()
+    );
     let mcp_search: Value = serde_json::from_str(
         &mcp::handle_message(
             &client,

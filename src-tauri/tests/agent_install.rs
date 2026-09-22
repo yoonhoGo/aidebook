@@ -87,7 +87,10 @@ fn all_four_targets_install_idempotently_preserve_settings_and_uninstall_only_ow
         &fs::read(f.home.join(".pi/agent/extensions/aidebook/config.json")).unwrap(),
     )
     .unwrap();
-    assert_eq!(pi["tools"].as_array().unwrap().len(), 13);
+    assert_eq!(
+        pi["tools"].as_array().unwrap().len(),
+        aidebook_lib::core::IPC_METHODS.len()
+    );
     assert!(!pi["tools"]
         .as_array()
         .unwrap()
@@ -179,7 +182,7 @@ fn installed_app_binary_serves_real_mcp_and_pi_calls_without_launching_a_window(
     assert_eq!(responses.len(), 3);
     assert_eq!(
         responses[1]["result"]["tools"].as_array().unwrap().len(),
-        13
+        aidebook_lib::core::IPC_METHODS.len()
     );
     assert_eq!(responses[2]["result"]["isError"], false);
     let mut call = Command::new(&binary)
@@ -220,5 +223,8 @@ fn installed_app_binary_serves_real_mcp_and_pi_calls_without_launching_a_window(
     let output = offline.wait_with_output().unwrap();
     assert!(output.status.success());
     let reply: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(reply["result"]["tools"].as_array().unwrap().len(), 13);
+    assert_eq!(
+        reply["result"]["tools"].as_array().unwrap().len(),
+        aidebook_lib::core::IPC_METHODS.len()
+    );
 }
