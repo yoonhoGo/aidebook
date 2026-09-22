@@ -3,6 +3,16 @@
 기준: `docs/ROADMAP.md`와 두 원문 기획 노트의 구체적인 MVP 설계를 우선했다.
 이 문서는 단계별 구현·검증 경계를 기록하며, native/live 경계는 별도로 표시한다.
 
+## 업무 자료 연결·가져오기·대시보드 — 2026-09-23
+
+- 서브에이전트 3개와 구현/검증 후 통합. jj `lunssuwp`, [상세 기록](WORKFLOW_W1B_W2_VALIDATION.md).
+- v9 명시 자료 연결·해제/재연결, 현재 접근 상태, 원본 미리보기, 선택한 legacy 묶음 가져오기·원본 보존.
+- 로컬 대시보드 5영역, 고정/목표일/우선순위, IANA 날짜/DST, 업무 상세 이동, 활동 타임라인.
+- 전체 Rust 102개, 프런트엔드 12개, 빌드, 실제 Core/CLI/MCP smoke, Pi 30개 도구 검증 통과.
+- 10k 메모리 DB/Core 영역별 p95 71–105ms. 디스크·화면·원격 자료 성능은 별도 경계.
+- 별도 native Tauri host IPC 저장·프로세스 재시작 보존 확인. AX permission_denied로 UI 저장/창 닫기 미검증. 알림 상태 조회만 확인; 예약/전달 미실행.
+- 캘린더 공급자 선택과 W3–W5 실제 계정/알림/출시 인수, 작은 native 창/전체 키보드 인수는 미완료.
+
 ## 업무·할 일 W1a — 2026-09-23
 
 - [W0 계약·매핑](WORKFLOW_CONTRACT.md), [상세 검증](WORKFLOW_VALIDATION.md), jj `qoyspyzk`.

@@ -1,0 +1,16 @@
+     Running BeforeDevCommand (`npm run dev -- --port 1437`)
+
+> aidebook@0.1.0 dev
+> vite --port 1437
+
+
+  VITE v8.3.0  ready in 97 ms
+
+  ➜  Local:   http://localhost:1437/
+     Running DevCommand (`cargo  run --no-default-features --color always --`)
+[1m[92m   Compiling[0m aidebook v0.1.0 (/Users/yoonho.go/workspace/aidebook/src-tauri)
+[1m[96m    Building[0m [=======================> ] 380/383: aidebook(build)
+[1m[96m    Building[0m [=======================> ] 381/383: aidebook
+[1m[96m    Building[0m [=======================> ] 382/383: aidebook(bin)
+[K[1m[92m    Finished[0m ]8;;https://doc.rust-lang.org/cargo/reference/profiles.html#default-profiles\`dev` profile [unoptimized + debuginfo]]8;;\ target(s) in 5.07s
+[1m[92m     Running[0m `target/debug/aidebook`

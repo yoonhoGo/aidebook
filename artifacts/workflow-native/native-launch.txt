@@ -1,0 +1,95 @@
+     Running BeforeDevCommand (`npm run dev -- --port 1437`)
+
+> aidebook@0.1.0 dev
+> vite --port 1437
+
+
+  VITE v8.3.0  ready in 137 ms
+
+  ➜  Local:   http://localhost:1437/
+     Running DevCommand (`cargo  run --no-default-features --color always --`)
+[1m[96m Downloading[0m 1 crate
+[1m[96m Downloading[0m 2 crates
+[1m[96m Downloading[0m 3 crates
+[K[1m[92m  Downloaded[0m phf_shared v0.12.1
+[1m[96m Downloading[0m 2 crates
+[K[1m[92m  Downloaded[0m phf v0.12.1
+[1m[96m Downloading[0m 1 crate
+[K[1m[92m  Downloaded[0m chrono-tz v0.10.4
+[1m[96m Downloading[0m 0 crates, extracting chrono-tz ...
+[K[1m[92m  Downloaded[0m 3 crates (814.2KiB) in 0.42s
+[1m[92m   Compiling[0m phf_shared v0.12.1
+[1m[92m   Compiling[0m chrono-tz v0.10.4
+[1m[92m   Compiling[0m aidebook v0.1.0 (/Users/yoonho.go/workspace/aidebook/src-tauri)
+[1m[96m    Building[0m [=======================> ] 375/383: phf_shared, chrono-tz(build…
+[K[1m[92m   Compiling[0m phf v0.12.1
+[1m[96m    Building[0m [=======================> ] 375/383: phf_shared, chrono-tz(build…
+[1m[96m    Building[0m [=======================> ] 376/383: phf_shared, chrono-tz(build…
+[1m[96m    Building[0m [=======================> ] 377/383: chrono-tz(build.rs), phf
+[1m[96m    Building[0m [=======================> ] 378/383: chrono-tz(build.rs)
+[1m[96m    Building[0m [=======================> ] 379/383: chrono-tz(build)
+[1m[96m    Building[0m [=======================> ] 380/383: chrono-tz
+[1m[96m    Building[0m [=======================> ] 381/383: aidebook
+[1m[96m    Building[0m [=======================> ] 382/383: aidebook(bin)
+[K[1m[92m    Finished[0m ]8;;https://doc.rust-lang.org/cargo/reference/profiles.html#default-profiles\`dev` profile [unoptimized + debuginfo]]8;;\ target(s) in 16.88s
+[1m[92m     Running[0m `target/debug/aidebook`
+
+thread 'main' (20395912) panicked at /Users/yoonho.go/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.5/src/app.rs:1425:11:
+Failed to setup app: error encountered during setup hook: ipc provider error (owner_unavailable): could not bind the Core socket: path must be shorter than SUN_LEN
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'main' (20395912) panicked at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:225:5:
+panic in a function that cannot unwind
+stack backtrace:
+   0:        0x1054117e4 - std::backtrace_rs::backtrace::libunwind::trace::h8c709fedfe3e7579
+                               at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/../../backtrace/src/backtrace/libunwind.rs:117:9
+   1:        0x1054117e4 - std::backtrace_rs::backtrace::trace_unsynchronized::h301468dd5f873f07
+                               at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/../../backtrace/src/backtrace/mod.rs:66:14
+   2:        0x1054117e4 - std::sys::backtrace::_print_fmt::hd8f2dd111008fb09
+                               at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/sys/backtrace.rs:74:9
+   3:        0x1054117e4 - <std::sys::backtrace::BacktraceLock::print::DisplayBacktrace as core::fmt::Display>::fmt::hbeea7a819b623c65
+                               at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/sys/backtrace.rs:44:26
+   4:        0x105421f44 - core::fmt::rt::Argument::fmt::h6d78f21e4a415442
+                               at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/fmt/rt.rs:152:76
+   5:        0x105421f44 - core::fmt::write::hedd53bdb9e87b4cf
+                               at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/fmt/mod.rs:1686:22
+   6:        0x1053e891c - std::io::default_write_fmt::h37ddaa0445cb524f
+                               at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/io/mod.rs:639:11
+   7:        0x1053e891c - std::io::Write::write_fmt::hdd87f23e14dc5d26
+                               at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/io/mod.rs:1994:13
+   8:        0x1053f658c - std::sys::backtrace::BacktraceLock::print::h0afc5f4839e5c28e
+                               at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/sys/backtrace.rs:47:25
+   9:        0x1053f658c - std::panicking::default_hook::{{closure}}::hb13fd44d9edf00c4
+                               at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/panicking.rs:292:27
+  10:        0x1053f648c - std::panicking::default_hook::h3b3b0d3cdb46d087
+                               at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/panicking.rs:319:9
+  11:        0x1053f6984 - std::panicking::panic_with_hook::h657ee82e431041f8
+                               at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/panicking.rs:825:13
+  12:        0x1053f6664 - std::panicking::panic_handler::{{closure}}::hd0ef6f87b4fd1427
+                               at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/panicking.rs:691:13
+  13:        0x1053f1cc8 - std::sys::backtrace::__rust_end_short_backtrace::hbd8bf96e4ee54567
+                               at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/sys/backtrace.rs:182:18
+  14:        0x1053e0cdc - __rustc[16f1505adc47261a]::rust_begin_unwind
+                               at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/panicking.rs:689:5
+  15:        0x1054506d4 - core::panicking::panic_nounwind_fmt::runtime::h72486554c89aba67
+                               at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:122:22
+  16:        0x1054506d4 - core::panicking::panic_nounwind_fmt::ha0c5189cd8bf4c83
+                               at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/intrinsics/mod.rs:2432:9
+  17:        0x10545065c - core::panicking::panic_nounwind::h57b3287bd6acdde6
+                               at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:225:5
+  18:        0x1054507b0 - core::panicking::panic_cannot_unwind::h441ae677ff4cf575
+                               at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:337:5
+  19:        0x104ec9a7c - tao::platform_impl::platform::app_delegate::did_finish_launching::hd2c2537053ada164
+                               at /Users/yoonho.go/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tao-0.35.3/src/platform_impl/macos/app_delegate.rs:125:1
+  20:        0x1819bf1a0 - <unknown>
+  21:        0x181a4e394 - <unknown>
+  22:        0x181a4e2d8 - <unknown>
+  23:        0x18198b3d0 - <unknown>
+  24:        0x18307c38c - <unknown>
+  25:        0x185f88a14 - <unknown>
+  26:        0x185f887a8 - <unknown>
+  27:        0x185f86e80 - <unknown>
+  28:        0x185f86a94 - <unknown>
+  29:        0x1830a520c - <unknown>
+  30:        0x1830a5004 - <unknown>
+thread caused non-unwinding panic. aborting.

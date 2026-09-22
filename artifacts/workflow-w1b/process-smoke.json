@@ -1,0 +1,9 @@
+{
+  "cli_create_replay": "passed",
+  "owner_restart_preserves_task_and_blocks": "passed",
+  "mcp_tools_and_shared_data": "passed",
+  "explicit_link_add_remove": "passed",
+  "legacy_preview_apply_replay": "passed",
+  "dashboard_shared_tasks": "passed",
+  "real_accounts_used": false
+}

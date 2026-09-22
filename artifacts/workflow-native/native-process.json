@@ -1,0 +1,10 @@
+{
+  "host": "real Tauri debug process",
+  "isolated_identifier": "dev.aidebook.wp923",
+  "ipc_create": "passed",
+  "process_termination_removes_ipc_service": "passed",
+  "native_host_restart_preserves_task_and_blocks": "passed",
+  "ui_save_verified": false,
+  "window_close_verified": false,
+  "real_accounts_used": false
+}

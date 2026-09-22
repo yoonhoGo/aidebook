@@ -1,0 +1,229 @@
+   Compiling aidebook v0.1.0 (/Users/yoonho.go/workspace/aidebook/src-tauri)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 11.97s
+     Running unittests src/lib.rs (src-tauri/target/debug/deps/aidebook_lib-7f11386b8cff6340)
+
+running 44 tests
+test core::confluence::tests::page_urls_are_site_bound_and_cql_is_quoted ... ok
+test core::confluence::tests::authored_and_watched_use_current_user_cql ... ok
+test core::confluence::tests::search_follows_validated_pagination_and_rejects_incomplete_data ... ok
+test core::confluence::tests::selected_fetches_only_selected_ids_and_extracts_text ... ok
+test core::db::tests::failed_second_migration_does_not_record_a_partial_version ... ok
+test core::db::workflow_activity::tests::history_rejects_invalid_targets_and_pagination ... ok
+test core::db::workflow::tests::migration_eight_failure_rolls_back_and_can_retry ... ok
+test core::db::workflow::tests::replay_conflict_and_same_title_are_independent ... ok
+test core::db::workflow::tests::competing_writers_commit_exactly_one_version ... ok
+test core::db::workflow::tests::stale_edit_and_completion_review_are_guarded ... ok
+test core::db::workflow_activity::tests::history_keeps_edits_completion_reopen_and_pagination ... ok
+test core::db::workflow::tests::parent_and_dates_validated_without_partial_writes ... ok
+test core::db::workflow::tests::event_failure_rolls_back_item_and_idempotency ... ok
+test core::github::tests::config_rejects_path_injection_and_bad_page_size ... ok
+test core::github::tests::provider_errors_are_structured_and_missing_credentials_are_blocked ... ok
+test core::db::workflow::tests::pagination_has_no_duplicate_ids_and_rejects_bad_limit ... ok
+test core::github::tests::selected_scope_paginates_issues_and_comments_without_exposing_token ... ok
+test core::db::workflow::tests::ipc_and_core_share_records_without_trusted_completion ... ok
+test core::db::workflow_links::tests::competing_removals_commit_one_version ... ok
+test core::db::workflow_links::tests::presentation_is_live_redacted_and_never_persisted ... ok
+test core::db::workflow_links::tests::migration_nine_rolls_back_and_retries ... ok
+test core::mcp::tests::tool_list_has_legacy_and_review_safe_methods ... ok
+test core::obsidian::tests::parses_allowed_metadata_and_explicit_links ... ok
+test core::db::workflow_links::tests::import_failure_rolls_back_mapping_work_link_and_idempotency ... ok
+test core::plugins::tests::jira_paginates_and_rejects_partial_or_repeated_pages ... ok
+test core::plugins::tests::jira_rejects_untrusted_hosts_and_maps_site_identity ... ok
+test core::ipc::tests::dispatch_preserves_legacy_methods_and_rejects_unknown_method ... ok
+test core::plugins::tests::legacy_settings_remain_project_scoped_and_mine_needs_no_project ... ok
+test core::plugins::tests::malformed_parent_aborts_before_returning_snapshots ... ok
+test core::plugins::tests::mine_fetches_cross_project_ancestors_once_and_stops_cycles ... ok
+test core::db::workflow_links::tests::source_reference_resolves_existing_identity_only ... ok
+test core::db::workflow_links::tests::revoked_evidence_rechecked_and_remove_version_guarded ... ok
+test core::db::workflow_links::tests::preview_import_mapping_replay_preserves_edits_and_originals ... ok
+test core::plugins::tests::missing_parent_aborts_the_whole_refresh ... ok
+test core::obsidian::tests::selected_root_scan_diff_detects_add_modify_remove_without_writing ... ok
+test core::ipc::tests::second_owner_is_rejected_and_owner_files_are_cleaned_up ... ok
+test core::plugins::tests::patches_persist_personal_scope_without_losing_identity ... ok
+test core::ipc::tests::stale_owner_lock_is_recovered_after_an_unclean_exit ... ok
+test core::plugins::tests::same_repository_supports_distinct_accounts_and_rejects_id_overwrite ... ok
+test core::db::workflow::tests::reopen_database_preserves_tasks_blocks_and_backup ... ok
+test core::db::workflow_links::tests::backup_restores_mapping_links_and_replay ... ok
+test core::plugins::tests::multiple_paths_persist_and_local_always_sorts_first ... ok
+test core::ipc::tests::authenticated_client_uses_one_owner_and_rejects_wrong_token ... ok
+test core::ipc::tests::accepted_socket_waits_for_delayed_workflow_request ... ok
+
+test result: ok. 44 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.29s
+
+     Running unittests src/main.rs (src-tauri/target/debug/deps/aidebook-2f501cc6ad257e7a)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/aidebook-cli.rs (src-tauri/target/debug/deps/aidebook_cli-b524e25fdda10673)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/aidebook-core.rs (src-tauri/target/debug/deps/aidebook_core-5683f973f6e0b435)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/agent_install.rs (src-tauri/target/debug/deps/agent_install-9d37e54ef3b8aa1d)
+
+running 4 tests
+test conflicting_or_malformed_configuration_never_installs_partial_assets ... ok
+test edited_skills_are_not_overwritten_or_removed ... ok
+test all_four_targets_install_idempotently_preserve_settings_and_uninstall_only_owned_entries ... ok
+test installed_app_binary_serves_real_mcp_and_pi_calls_without_launching_a_window ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.80s
+
+     Running tests/candidate_lifecycle.rs (src-tauri/target/debug/deps/candidate_lifecycle-080dd711fabb13b3)
+
+running 2 tests
+test reject_is_terminal_and_never_creates_a_canonical_memory ... ok
+test lifecycle_is_persistent_and_idempotent_until_human_review ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/candidate_review.rs (src-tauri/target/debug/deps/candidate_review-2032e7903058d067)
+
+running 2 tests
+test competing_review_cannot_accept_a_rejected_candidate ... ok
+test promotion_rolls_back_every_write_when_candidate_update_fails ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/context_review.rs (src-tauri/target/debug/deps/context_review-b43245f68f3487e1)
+
+running 6 tests
+test memory_only_match_reports_stale_evidence_under_requested_age ... ok
+test cache_clear_keeps_memory_but_marks_its_missing_evidence_unavailable ... ok
+test explicit_revoked_root_is_reported_without_a_graph_build ... ok
+test source_and_memory_limits_report_truncation ... ok
+test unrooted_query_does_not_limit_memories_to_first_lexical_source ... ok
+test new_source_after_graph_build_does_not_break_context_packet ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests/graph_review.rs (src-tauri/target/debug/deps/graph_review-90d497e97916d148)
+
+running 7 tests
+test revoked_target_does_not_leave_dangling_edges_or_cached_titles ... ok
+test removed_explicit_relation_cannot_survive_a_rebuild_digest_replay ... ok
+test link_only_changes_are_stale_before_rebuild_and_revocation_is_unavailable ... ok
+test wikilinks_remain_in_namespace_and_ambiguous_paths_are_skipped ... ok
+test traversal_handles_inbound_edges_and_returns_only_complete_edges_at_bounds ... ok
+test url_changes_invalidate_edges_without_changing_body ... ok
+test hop_depth_uses_shortest_path_when_cycles_have_longer_routes ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+     Running tests/local_auto_sync.rs (src-tauri/target/debug/deps/local_auto_sync-be2416b12a310e4d)
+
+running 3 tests
+test restart_reconciles_offline_deletions_and_pause_is_persistent ... ok
+test unavailable_vault_preserves_cache_and_does_not_block_other_connections ... ok
+test polling_updates_content_links_deletions_and_restores_without_writing_the_vault ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests/m0_core.rs (src-tauri/target/debug/deps/m0_core-6d34f6c89a55645d)
+
+running 6 tests
+test fixture_contract_is_read_only_and_has_explicit_provider_scope ... ok
+test sync_failure_does_not_erase_last_success_and_search_limits_are_guarded ... ok
+test credential_like_memory_content_is_rejected_without_blocking_normal_text ... ok
+test both_read_only_fixtures_dedupe_and_exclude_denied_sources ... ok
+test memory_mutations_are_idempotent_versioned_and_reversible ... ok
+test failed_refresh_keeps_last_good_snapshot_and_survives_restart ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests/m1_obsidian.rs (src-tauri/target/debug/deps/m1_obsidian-2a9201f7edf452b6)
+
+running 1 test
+test selected_vault_is_read_only_scoped_and_i_cloud_states_are_visible ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/m2_github.rs (src-tauri/target/debug/deps/m2_github-e6773eb1a9dac7e5)
+
+running 2 tests
+test credential_and_scope_boundaries_are_explicit ... ok
+test selected_repository_refreshes_pages_and_preserves_last_success_on_failure ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/m3_core.rs (src-tauri/target/debug/deps/m3_core-593cfb704ddb8c2f)
+
+running 3 tests
+test same_title_does_not_merge_and_explicit_relation_can_be_removed ... ok
+test ui_memory_save_is_versioned_idempotent_and_keeps_user_memory_when_evidence_is_unavailable ... ok
+test ten_explicit_ui_examples_remain_separate_records ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/m4_ipc.rs (src-tauri/target/debug/deps/m4_ipc-4c5ead0eb260a213)
+
+running 1 test
+test cli_and_mcp_protocols_share_one_authenticated_core_owner ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+     Running tests/m5_benchmark.rs (src-tauri/target/debug/deps/m5_benchmark-6cddf3a35e5b4968)
+
+running 1 test
+test search_10k_p95_is_recorded ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 13.19s
+
+     Running tests/m5_storage.rs (src-tauri/target/debug/deps/m5_storage-32cc5b62e0a61fd0)
+
+running 4 tests
+test failure_state_is_not_treated_as_cache_success ... ok
+test corrupt_restore_does_not_replace_active_database ... ok
+test backup_restore_is_integrity_checked_and_cache_clear_preserves_memories ... ok
+test restoring_a_v4_backup_migrates_only_the_staged_copy ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests/markdown_exchange.rs (src-tauri/target/debug/deps/markdown_exchange-4d80abd5ffbb9945)
+
+running 5 tests
+test export_is_deterministic_and_contains_evidence_revisions_and_wikilinks ... ok
+test export_import_preserves_fenced_headings_and_trailing_body_whitespace ... ok
+test import_uses_edited_body_and_is_idempotent_without_auto_acceptance ... ok
+test unclosed_body_fence_rejects_all_documents_atomically ... ok
+test malformed_later_section_rolls_back_every_candidate ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests/plugin_management.rs (src-tauri/target/debug/deps/plugin_management-de3f503976b43ae7)
+
+running 5 tests
+test partial_updates_preserve_other_fields_and_new_scope_is_used_by_next_scan ... ok
+test unavailable_vault_can_be_renamed_paused_and_removed_without_resolving_its_path ... ok
+test invalid_edits_duplicates_credentials_and_unauthenticated_mutations_are_rejected ... ok
+test atlassian_scopes_roundtrip_through_cli_mcp_and_saved_registry ... ok
+test cli_mcp_and_app_share_persistent_multi_vault_crud_and_real_refresh ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.48s
+
+     Running tests/workflow_dashboard.rs (src-tauri/target/debug/deps/workflow_dashboard-ec5b4809c2eebf87)
+
+running 6 tests
+test invalid_query_inputs_are_rejected ... ok
+test ordering_reasons_filters_and_pages_are_consistent ... ok
+test completion_uses_transition_time_not_later_edit ... ok
+test local_midnight_and_dst_days_are_half_open ... ok
+test inactive_parents_block_actions_and_report_attention ... ok
+test dashboard_10k_query_p95_is_recorded ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 14.53s
+
+   Doc-tests aidebook_lib
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

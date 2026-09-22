@@ -1,0 +1,48 @@
+{
+  "arch": "aarch64",
+  "fixture_count": 10000,
+  "os": "macos",
+  "profile": "test_debug",
+  "results": [
+    {
+      "p95_ms": 79.010917,
+      "runs": 30,
+      "section": "today",
+      "target_met": true,
+      "target_ms": 300
+    },
+    {
+      "p95_ms": 104.691,
+      "runs": 30,
+      "section": "next",
+      "target_met": true,
+      "target_ms": 300
+    },
+    {
+      "p95_ms": 81.44283300000001,
+      "runs": 30,
+      "section": "attention",
+      "target_met": true,
+      "target_ms": 300
+    },
+    {
+      "p95_ms": 70.98404099999999,
+      "runs": 30,
+      "section": "in_progress",
+      "target_met": true,
+      "target_ms": 300
+    },
+    {
+      "p95_ms": 76.666292,
+      "runs": 30,
+      "section": "completed",
+      "target_met": true,
+      "target_ms": 300
+    }
+  ],
+  "storage": "in_memory_sqlite",
+  "command": "cargo test --manifest-path src-tauri/Cargo.toml --test workflow_dashboard -- --nocapture",
+  "result": "6 passed; 0 failed; finished in 14.32s",
+  "warmup_runs_per_section": 3,
+  "limitation": "Core query only; excludes frontend rendering, disk IO, native WebView, and remote calendar data."
+}

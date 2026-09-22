@@ -1,5 +1,7 @@
 # W0 계약·W1a 업무와 할 일 검증
 
+> 후속 구현과 검증은 [W1b·W2 검증 기록](WORKFLOW_W1B_W2_VALIDATION.md)을 참조한다. 이 문서는 W1a 시점의 기록이다.
+
 작성: 2026-09-23. jj change: `qoyspyzk`.
 
 ## 구현과 남은 경계

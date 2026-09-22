@@ -1,6 +1,6 @@
 # 업무·할 일 계약과 기존 데이터 매핑
 
-작성: 2026-09-23. W0 검토 가능한 계약 초안, W1a 구현 범위를 함께 기록한다.
+작성: 2026-09-23. W0 계약과 W1a/W1b·W2 구현 범위를 기록한다. 후속 검증은 [W1b·W2 기록](WORKFLOW_W1B_W2_VALIDATION.md)을 따른다.
 전체 단계 완료 여부는 [검증 기록](WORKFLOW_VALIDATION.md)을 따른다.
 
 ## 기존 저장소 조사
@@ -49,7 +49,7 @@ SQLite v8에서 `work_items`, `tasks`, `activity_events`를 추가한다. 각 �
 
 `work_links`의 endpoint는 업무/할 일/일정 ID 또는 기존 SourceRef/Memory ID를 참조한다. 문서·티켓·PR 본문을 복제하지 않는다. 관계 종류는 `context`(관련 맥락), `meeting_minutes`(회의록), `specification`(설계), `implements`(티켓/PR 실행), `verification`(검증), `completion_record`(작업 기록)로 시작한다. 하나의 자료를 여러 업무에서 참조할 수 있다.
 
-동일 endpoint 쌍·관계 종류는 중복 생성하지 않는다. 이유, evidence, author, confirmed, version, 생성/해제 시각을 둔다. 사용자가 명시적으로 연결한 관계는 confirmed이며 자동 추출·유사 제목은 후보로만 둔다. 해제는 관계만 비활성화하고 원본·메모·계획·다른 업무의 링크는 보존한다. 접근 권한은 링크가 아니라 현재 원본의 접근 상태로 판단한다. 이는 W1b 구현 계약이며 v8에 관계 테이블이 생겼다는 뜻은 아니다.
+동일 endpoint 쌍·관계 종류는 중복 생성하지 않는다. 이유, evidence, author, confirmed, version, 생성/해제 시각을 둔다. 사용자가 명시적으로 연결한 관계는 confirmed이며 자동 추출·유사 제목은 후보로만 둔다. 해제는 관계만 비활성화하고 원본·메모·계획·다른 업무의 링크는 보존한다. 접근 권한은 링크가 아니라 현재 원본의 접근 상태로 판단한다. v9에서 업무 → 원본/기존 메모의 부분집합을 구현했다. 일정/할 일 endpoint 확장은 후속이다. reason과 target의 기존 근거를 사용하며 별도 evidence 사본은 저장하지 않는다. author는 explicit_request다. 링크 조회용 제목/SourceRef/수집 시각은 현재 자료에서 계산하고 저장하지 않는다.
 
 ## 공통 API
 
@@ -61,7 +61,7 @@ SQLite v8에서 `work_items`, `tasks`, `activity_events`를 추가한다. 각 �
 
 save는 부분 patch가 아니라 fields 전체 교체다. 생성은 id/expected_version 생략 또는 null, 수정은 id와 양의 expected_version이 필수다. 저장 성공 후 Core 결과를 재조회한다. 같은 idempotency_key와 payload는 처음 응답을 재생하고, 다른 payload는 충돌한다. 저장·활동·멱등성 응답은 하나의 transaction이다.
 
-list: kind 필수, 선택적 work_id는 task에만 허용. limit 기본 50/최대 100, offset 기본 0. updated_at DESC, id ASC로 결정적으로 정렬한다. offset 페이지를 조회하는 사이 다른 수정이 있으면 경계가 이동할 수 있으며 UI는 변경 뒤 재조회한다. W2 대시보드 정렬/날짜 분류 API는 아직 구현하지 않았다.
+list: kind 필수, 선택적 work_id는 task에만 허용. limit 기본 50/최대 100, offset 기본 0. updated_at DESC, id ASC로 결정적으로 정렬한다. offset 페이지를 조회하는 사이 다른 수정이 있으면 경계가 이동할 수 있으며 UI는 변경 뒤 재조회한다. W2 대시보드 정렬/날짜 분류는 dashboard.get으로 구현했다.
 
 ```sh
 # 실행 중인 Core owner의 데이터 디렉터리를 사용
@@ -70,7 +70,7 @@ aidebook-cli workflow save --data-dir /tmp/aidebook-workflow-demo --params '{"ki
 aidebook-cli workflow list --data-dir /tmp/aidebook-workflow-demo --params '{"kind":"work","limit":20}'
 ```
 
-후속 API 설계: `work_link.add/remove/list`(명시 참조·이유·버전·멱등성), `dashboard.get`(날짜·시간대·페이지·정렬 이유), `reminder.save/cancel/snooze/list`(대상·예약시각·버전·멱등성). 아직 transport 목록에 노출하지 않는다. review가 필요한 관계 제안/완료 확정은 generic 자동화 경로와 구분한다.
+추가 API: `work_link.add/remove/list`(명시 참조·이유·버전·멱등성), `dashboard.get`(날짜·시간대·페이지·정렬 이유), `reminder.save/cancel/snooze/list`(대상·예약시각·버전·멱등성). work_link와 dashboard는 구현·노출했고 reminder는 아직 설계이며 노출하지 않는다. review가 필요한 관계 제안/완료 확정은 generic 자동화 경로와 구분한다.
 
 ## 명시 가져오기·복원 인수 절차
 
@@ -81,7 +81,7 @@ aidebook-cli workflow list --data-dir /tmp/aidebook-workflow-demo --params '{"ki
 5. 실패 주입으로 새 행·매핑·멱등 기록의 rollback을 확인한다. 원본 localStorage는 성공/실패 모두 보존한다.
 6. Core 복원 시 v7 백업은 현재 마이그레이션으로 업그레이드하되 백업 당시 없던 업무는 복원되지 않는다는 점을 미리 표시한다. v8 백업은 업무·할 일·작업 시간·활동·멱등 기록을 함께 복원한다.
 
-2–5의 가져오기 UI/매핑은 미구현이다. 기존 메모 가져오기 기능을 이번 업무 가져오기 완료로 간주하지 않는다.
+2–5의 묶음 가져오기 미리보기/명시 적용/매핑/rollback 검증은 v9에 구현했다. nativeId가 없는 메모 본문은 자동 승격하지 않으며 기존 메모 가져오기 경로로 안내한다. 기존 메모 가져오기와 업무 묶음 가져오기는 독립적이다.
 
 ## 캘린더·native 수명 결정
 
@@ -90,3 +90,9 @@ aidebook-cli workflow list --data-dir /tmp/aidebook-workflow-demo --params '{"ki
 현재 `lib.rs`는 Tauri window Destroyed 때 Core와 LocalSync에 stop 신호를 보낸다. 앱 종료 후 IPC/동기화 지속을 보장하지 않는다. standalone aidebook-core는 별도 실행 가능하지만 자동 시작 agent/daemon 설치가 아니다. 현재 Cargo dependencies에는 OS notification plugin이 없고, 캘린더/알림 권한·예약 구현도 없다.
 
 W0 native 검증은 아직 미완료다. 독립적인 테스트 앱으로 권한 상태/거부, 창 닫기와 Cmd-Q, pending OS 예약의 잔존, 알림 클릭 라우팅을 측정한다. 창을 숨길지 종료할지 제품 동작을 결정하고, 앱 종료 중에도 OS 예약만 전달할 수 있는지와 원격 변경을 알 수 없는 경계를 구분한다. SDK 컴파일이나 소스 읽기를 실제 전달 검증으로 기록하지 않는다.
+
+## W2 조회와 활동
+
+`dashboard.get`은 timezone(IANA), section(today/next/attention/in_progress/completed), 선택적 now(RFC3339), kind, limit(기본20/최대100), offset을 받는다. 각 페이지에 date, timezone, generated_at, entries, total, has_more와 calendar_connected=false를 반환한다. fields.pinned는 기본 false로 기존 JSON과 호환된다. 최근 완료는 활동의 실제 done 전이를 기준으로 오늘 포함 7개 날짜만 반환한다.
+
+`workflow.activity.list`는 kind/id와 limit/offset을 받고 버전 역순의 상태 전이·기록 시각을 반환한다. 출처 없는 작성 주체는 추정하지 않는다. UI는 두 조회 결과를 별도 영속 상태로 저장하지 않는다.

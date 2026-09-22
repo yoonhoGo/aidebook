@@ -1,0 +1,17 @@
+.dashboard-page .container { max-width: 1200px; }
+.dashboard-controls { display: flex; gap: 12px; flex-wrap: wrap; align-items: end; margin: 20px 0; }
+.dashboard-controls label { display: flex; flex-direction: column; gap: 6px; }
+.dashboard-controls input, .dashboard-controls select { font: inherit; padding: 8px; border: 1px solid var(--border, #ddd); border-radius: 6px; background: transparent; color: inherit; min-width: 0; }
+.dashboard-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; margin-top: 20px; }
+.dashboard-section { min-width: 0; border: 1px solid var(--border, #ddd); border-radius: 10px; padding: 20px; }
+.dashboard-section h2 { font-size: 20px; margin-bottom: 8px; }
+.dashboard-section ul { list-style: none; padding: 0; }
+.dashboard-section li { border-top: 1px solid var(--border, #ddd); padding: 16px 0; }
+.dashboard-section .row-between { align-items: start; gap: 10px; }
+.dashboard-title { border: 0; background: transparent; color: inherit; text-align: left; font: inherit; font-weight: 600; padding: 0; cursor: pointer; overflow-wrap: anywhere; }
+.dashboard-title:hover { text-decoration: underline; }
+.dashboard-purpose { white-space: pre-wrap; overflow-wrap: anywhere; }
+.dashboard-actions, .dashboard-pagination { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.dashboard-pagination { justify-content: space-between; }
+.dashboard-page button:disabled { opacity: .45; cursor: default; }
+@media (max-width: 1120px) { .dashboard-grid { grid-template-columns: 1fr; } }

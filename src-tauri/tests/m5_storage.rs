@@ -63,7 +63,7 @@ fn backup_restore_is_integrity_checked_and_cache_clear_preserves_memories() {
     })
     .expect("memory");
     let backup_result = core.backup_to(&backup).expect("backup");
-    assert_eq!(backup_result.schema_version, 8);
+    assert_eq!(backup_result.schema_version, 9);
     core.ingest_snapshot(second_snapshot)
         .expect("second snapshot");
     assert_eq!(search(&core, "second"), 1);
@@ -132,7 +132,9 @@ fn restoring_a_v4_backup_migrates_only_the_staged_copy() {
         let connection = Connection::open(&legacy).expect("legacy sqlite");
         connection
             .execute_batch(
-                "DROP TABLE tasks;
+                "DROP TABLE work_links;
+                 DROP TABLE legacy_work_mappings;
+                 DROP TABLE tasks;
                  DROP TABLE work_items;
                  DROP TABLE activity_events;
                  DROP TABLE memory_candidates;
@@ -146,7 +148,7 @@ fn restoring_a_v4_backup_migrates_only_the_staged_copy() {
     }
     let before = fs::read(&legacy).expect("legacy bytes");
     let result = core.restore_from(&legacy).expect("restore legacy backup");
-    assert_eq!(result.schema_version, 8);
+    assert_eq!(result.schema_version, 9);
     assert_eq!(
         fs::read(&legacy).expect("legacy bytes after restore"),
         before

@@ -162,6 +162,7 @@ transaction에서 적용한다.
 - v6: graph edge source/target URLs for detecting URL retargets before rebuild
 - v7: persistent observations and review-gated memory candidates
 - v8: local `work_items`, `tasks`, `activity_events`; see [workflow contract](WORKFLOW_CONTRACT.md)
+- v9: explicit `work_links` and stable `legacy_work_mappings`
 
 마이그레이션 SQL, version 기록, commit이 하나의 transaction에 들어가므로
 실패하면 해당 version과 새 테이블이 함께 rollback된다. 외래 키를 켜며,
@@ -202,3 +203,5 @@ freshness·availability를 묶는 추가 read method다. 관찰·candidate trans
 ## 업무와 할 일 (W1a)
 
 `workflow.save/get/list`와 Tauri 대응 명령은 같은 Core SQLite를 사용한다. 새 업무 화면은 localStorage에 업무 상태를 복제하지 않는다. 기존 메모/묶음 가져오기는 별도 명시 작업이다. 버전·멱등성·trusted 완료 검토 경계는 [업무 계약](WORKFLOW_CONTRACT.md), 실제 검증과 미완료 항목은 [검증 기록](WORKFLOW_VALIDATION.md)을 따른다.
+
+W1b의 `work_link.add/remove/list`, `workflow.import.preview/apply`, W2의 `dashboard.get`, `workflow.activity.list`도 같은 Core owner를 사용한다. [W1b·W2 검증](WORKFLOW_W1B_W2_VALIDATION.md)에 상태/성능/native 경계를 기록했다.

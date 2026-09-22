@@ -54,6 +54,10 @@ fn connection_properties() -> Value {
     })
 }
 
+fn workflow_import_properties() -> Value {
+    json!({"namespace":{"type":"string"},"groups":{"type":"array","maxItems":100,"items":{"type":"object","additionalProperties":false,"required":["legacy_work_index","title"],"properties":{"legacy_work_index":{"type":"integer","minimum":0},"title":{"type":"string"},"native_memory_ids":{"type":"array","items":{"type":"string"}},"unmigrated_note_count":{"type":"integer","minimum":0}}}}})
+}
+
 pub fn tool_descriptors() -> Vec<Value> {
     IPC_METHODS
         .iter()
@@ -224,6 +228,7 @@ pub fn tool_descriptors() -> Vec<Value> {
                             "work_id":{"type":["string","null"]},
                             "target_date":{"type":["string","null"],"description":"Local target date YYYY-MM-DD, never the remote due date"},
                             "priority":{"type":"integer","minimum":0,"maximum":3},
+                            "pinned":{"type":"boolean","default":false},
                             "time_blocks":{"type":"array","maxItems":100,"items":{"type":"object","additionalProperties":false,"required":["start","end"],"properties":{"start":{"type":"string","format":"date-time"},"end":{"type":"string","format":"date-time"}}}}
                         }}
                     }),
@@ -238,6 +243,40 @@ pub fn tool_descriptors() -> Vec<Value> {
                     "Page local work items or tasks, newest update first. work_id filters tasks only.",
                     json!({"kind":{"type":"string","enum":["work","task"]},"work_id":{"type":["string","null"]},"limit":{"type":"integer","minimum":1,"maximum":100,"default":50},"offset":{"type":"integer","minimum":0,"default":0}}),
                     vec!["kind"],
+                ),
+                "work_link.add" => (
+                    "Explicitly link an existing accessible source or reviewed memory to a work item. Does not copy source text or approve memory candidates. Removed links require expected_version to reactivate.",
+                    json!({"work_id":{"type":"string"},"target_kind":{"type":"string","enum":["source","memory"]},"target_id":{"type":"string"},"target_source":{"type":["object","null"],"required":["provider","account_id","external_id","url","kind"],"properties":{"provider":{"type":"string"},"account_id":{"type":"string"},"external_id":{"type":"string"},"url":{"type":"string"},"kind":{"type":"string"}}},"relation_type":{"type":"string","enum":["context","meeting_minutes","specification","implements","verification","completion_record"]},"reason":{"type":"string"},"idempotency_key":{"type":"string"},"expected_version":{"type":["integer","null"],"minimum":1}}),
+                    vec!["work_id","target_kind","relation_type","reason","idempotency_key"],
+                ),
+                "work_link.remove" => (
+                    "Deactivate only the selected work link, preserving original sources, memories and plans.",
+                    json!({"id":{"type":"string"},"expected_version":{"type":"integer","minimum":1},"idempotency_key":{"type":"string"}}),
+                    vec!["id","expected_version","idempotency_key"],
+                ),
+                "work_link.list" => (
+                    "Page explicit work links with current access status; unavailable targets must not be represented as accessible.",
+                    json!({"work_id":{"type":"string"},"include_removed":{"type":"boolean","default":false},"limit":{"type":"integer","minimum":1,"maximum":100,"default":100},"offset":{"type":"integer","minimum":0,"default":0}}),
+                    vec!["work_id"],
+                ),
+                "workflow.import.preview" => (
+                    "Preview explicitly supplied legacy groups and existing reviewed memory IDs without writes. Unmigrated notes remain untouched.",
+                    workflow_import_properties(),vec!["namespace","groups"],
+                ),
+                "workflow.import.apply" => {
+                    let mut properties=workflow_import_properties();
+                    properties["idempotency_key"]=json!({"type":"string"});
+                    ("Apply explicitly selected legacy work groups after preview; stable mapping preserves existing work edits and source notes.",properties,vec!["namespace","groups","idempotency_key"])
+                },
+                "dashboard.get" => (
+                    "Read a derived local workflow dashboard page in an IANA timezone. No calendar integration yet. today shows time blocks and targets; next is pinned/overdue/soon/priority; completed covers seven local dates.",
+                    json!({"timezone":{"type":"string"},"now":{"type":["string","null"],"format":"date-time"},"section":{"type":"string","enum":["today","next","attention","in_progress","completed"]},"limit":{"type":"integer","minimum":1,"maximum":100,"default":20},"offset":{"type":"integer","minimum":0,"default":0},"kind":{"type":["string","null"],"enum":["work","task",null]}}),
+                    vec!["timezone","section"],
+                ),
+                "workflow.activity.list" => (
+                    "Read a version-ordered local activity timeline; no author identity is inferred.",
+                    json!({"kind":{"type":"string","enum":["work","task"]},"id":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":100,"default":20},"offset":{"type":"integer","minimum":0,"default":0}}),
+                    vec!["kind","id"],
                 ),
                 "sources.refresh" => (
                     "Refresh an explicitly supplied read-only fixture through the Core.",
@@ -262,7 +301,7 @@ pub fn tool_descriptors() -> Vec<Value> {
                     "type": "object",
                     "properties": properties,
                     "required": required,
-                    "additionalProperties": !(name.starts_with("plugins.") || name.starts_with("workflow."))
+                    "additionalProperties": !(name.starts_with("plugins.") || name.starts_with("workflow.") || name.starts_with("work_link.") || name.starts_with("dashboard."))
                 }
             })
         })

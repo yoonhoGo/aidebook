@@ -16,6 +16,9 @@ use std::sync::Mutex;
 use uuid::Uuid;
 
 pub mod workflow;
+pub mod workflow_activity;
+pub mod workflow_dashboard;
+pub mod workflow_links;
 
 const MIGRATIONS: &[(i64, &str)] = &[
     (
@@ -260,6 +263,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
         "#,
     ),
     (8, workflow::SCHEMA),
+    (9, workflow_links::SCHEMA),
 ];
 
 #[derive(Debug)]

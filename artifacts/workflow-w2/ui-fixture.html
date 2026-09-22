@@ -1,0 +1,12 @@
+<!doctype html><html lang="ko"><meta charset="utf-8"><title>Dashboard browser fixture</title><div id="root"></div><script type="module">
+import RefreshRuntime from "/@react-refresh";RefreshRuntime.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>type=>type;window.__vite_plugin_react_preamble_installed__=true;
+</script><script type="module">
+import React from 'react';
+import {createRoot} from 'react-dom/client';
+import DashboardPanel from '/src/DashboardPanel.tsx';
+import '/src/App.css';
+window.isTauri=true;window.requests=[];window.completed=false;
+const item={id:'task-fixture',kind:'task',version:1,fields:{title:'대시보드 작업 검증',status:'planned',purpose:'브라우저 fixture',blocked_reason:null,work_id:null,target_date:'2026-09-23',priority:3,pinned:true,time_blocks:[]}};
+window.__TAURI_INTERNALS__={invoke:async(cmd,args)=>{window.requests.push({cmd,args});if(cmd==='dashboard_get'){new Intl.DateTimeFormat('ko-KR',{timeZone:args.input.timezone});const entries=(!window.completed&&['next','today'].includes(args.input.section))||(window.completed&&args.input.section==='completed')?[{entry_id:'fixture-entry',item:{...item,fields:{...item.fields,status:window.completed?'done':'planned'}},reasons:[window.completed?'completed':'pinned'],starts_at:null,ends_at:null,completed_at:window.completed?new Date().toISOString():null}]:[];return {date:'2026-09-23',timezone:args.input.timezone,generated_at:new Date().toISOString(),entries,total:entries.length,has_more:false};}if(cmd==='workflow_save'){window.completed=true;return {item:{...item,version:2,fields:args.input.fields}};}throw Error(cmd);}};
+createRoot(document.getElementById('root')).render(React.createElement('main',null,React.createElement('p',{style:{padding:16}},'브라우저 fixture: 실제 Core·native 화면 미연결'),React.createElement(DashboardPanel,{onOpen:selection=>{window.selection=selection;document.getElementById('selected').textContent='선택한 항목: '+selection.id}}),React.createElement('p',{id:'selected'})));
+</script></html>

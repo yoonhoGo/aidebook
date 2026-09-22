@@ -16,6 +16,12 @@ pub mod mcp;
 pub mod obsidian;
 pub mod plugins;
 pub mod types;
+pub mod workflow_links;
+pub use workflow_links::*;
+pub mod workflow_activity;
+pub use workflow_activity::*;
+pub mod workflow_dashboard;
+pub use workflow_dashboard::*;
 
 use db::Database;
 pub use fixtures::{

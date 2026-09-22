@@ -12,3 +12,7 @@
 .workflow-block { display: flex; gap: 12px; flex-wrap: wrap; align-items: end; }
 .workflow-block label { flex: 1; min-width: 180px; }
 .workflow-page button:disabled { opacity: .5; cursor: default; }
+.workflow-links { list-style: none; padding: 0; }
+.workflow-links li { border-bottom: 1px solid var(--border, #deded8); padding: 10px 0; overflow-wrap: anywhere; }
+.workflow-editor summary { cursor: pointer; font-weight: 600; }
+.workflow-editor input[type="checkbox"], .workflow-editor input[type="radio"] { width: auto; margin-right: 8px; }

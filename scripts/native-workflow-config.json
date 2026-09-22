@@ -1,0 +1,17 @@
+{
+  "identifier": "dev.aidebook.wp923",
+  "productName": "Aidebook Workflow Probe",
+  "build": {
+    "beforeDevCommand": "npm run dev -- --port 1437",
+    "devUrl": "http://localhost:1437"
+  },
+  "app": {
+    "windows": [{
+      "title": "Aidebook Workflow Probe",
+      "width": 1280,
+      "height": 800,
+      "minWidth": 980,
+      "minHeight": 640
+    }]
+  }
+}

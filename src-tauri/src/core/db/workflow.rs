@@ -65,6 +65,8 @@ pub struct WorkflowFields {
     #[serde(default)]
     pub priority: u8,
     #[serde(default)]
+    pub pinned: bool,
+    #[serde(default)]
     pub time_blocks: Vec<TimeBlock>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -351,6 +353,7 @@ mod tests {
                 work_id: None,
                 target_date: Some("2026-09-23".into()),
                 priority: 2,
+                pinned: false,
                 time_blocks: vec![],
             },
         }

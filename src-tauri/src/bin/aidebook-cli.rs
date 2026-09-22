@@ -154,9 +154,17 @@ fn method_from_command(args: &[String]) -> Result<String, CoreError> {
                 Some("query") => "context.query.v1",
                 _ => return Err(usage("context search|get|query")),
             },
+            Some("dashboard") if args.get(1).is_some_and(|v|v=="get") => "dashboard.get",
+            Some("work-link") => match args.get(1).map(String::as_str) {
+                Some("add") => "work_link.add", Some("remove") => "work_link.remove", Some("list") => "work_link.list",
+                _ => return Err(usage("work-link add|remove|list --params JSON")),
+            },
             Some("workflow") => match args.get(1).map(String::as_str) {
+                Some("activity") => "workflow.activity.list",
+                Some("import-preview") => "workflow.import.preview",
+                Some("import-apply") => "workflow.import.apply",
                 Some("save") => "workflow.save", Some("get") => "workflow.get", Some("list") => "workflow.list",
-                _ => return Err(usage("workflow save|get|list --params JSON")),
+                _ => return Err(usage("workflow save|get|list|activity|import-preview|import-apply --params JSON")),
             },
             Some("memory") => match args.get(1).map(String::as_str) {
                 Some("upsert") => "memory.upsert",

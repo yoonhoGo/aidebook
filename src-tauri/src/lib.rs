@@ -630,6 +630,57 @@ fn workflow_get(
     state.core.workflow_get(input)
 }
 
+#[tauri::command]
+fn workflow_link_add(
+    input: core::WorkflowLinkAddInput,
+    state: State<'_, AppState>,
+) -> Result<core::WorkflowLinkMutation, CoreError> {
+    state.core.workflow_link_add(input)
+}
+#[tauri::command]
+fn workflow_link_remove(
+    input: core::WorkflowLinkRemoveInput,
+    state: State<'_, AppState>,
+) -> Result<core::WorkflowLinkMutation, CoreError> {
+    state.core.workflow_link_remove(input)
+}
+#[tauri::command]
+fn workflow_link_list(
+    input: core::WorkflowLinkListInput,
+    state: State<'_, AppState>,
+) -> Result<Vec<core::WorkflowLink>, CoreError> {
+    state.core.workflow_link_list(input)
+}
+#[tauri::command]
+fn workflow_import_preview(
+    input: core::WorkflowImportInput,
+    state: State<'_, AppState>,
+) -> Result<core::WorkflowImportPreview, CoreError> {
+    state.core.workflow_import_preview(input)
+}
+#[tauri::command]
+fn workflow_import_apply(
+    input: core::WorkflowImportApplyInput,
+    state: State<'_, AppState>,
+) -> Result<core::WorkflowImportResult, CoreError> {
+    state.core.workflow_import_apply(input)
+}
+#[tauri::command]
+fn dashboard_get(
+    input: core::DashboardInput,
+    state: State<'_, AppState>,
+) -> Result<core::DashboardPage, CoreError> {
+    state.core.dashboard_get(input)
+}
+
+#[tauri::command]
+fn workflow_activity_list(
+    input: core::WorkflowActivityInput,
+    state: State<'_, AppState>,
+) -> Result<Vec<core::WorkflowActivityEvent>, CoreError> {
+    state.core.workflow_activity_list(input)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -705,6 +756,13 @@ pub fn run() {
             workflow_save,
             workflow_get,
             workflow_list,
+            workflow_link_add,
+            workflow_link_remove,
+            workflow_link_list,
+            workflow_import_preview,
+            workflow_import_apply,
+            dashboard_get,
+            workflow_activity_list,
             vault_select,
             vault_scan,
             github_select,

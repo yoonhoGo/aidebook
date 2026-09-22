@@ -1,0 +1,13 @@
+<!doctype html><html lang="ko"><meta charset="utf-8"><title>W1b browser fixture</title><div id="root"></div><script type="module">
+import RefreshRuntime from "/@react-refresh";RefreshRuntime.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>type=>type;window.__vite_plugin_react_preamble_installed__=true;
+</script><script type="module">
+import React from 'react';
+import {createRoot} from 'react-dom/client';
+import ImportPanel from '/src/WorkflowImportPanel.tsx';
+import LinksPanel from '/src/WorkflowLinksPanel.tsx';
+import '/src/WorkflowPanel.css';
+let attempts=0;window.requests=[];
+localStorage.setItem('aidebook-notes-v1',JSON.stringify([{work:0,nativeId:'memory-1'},{work:0,body:'preserved'}, {work:9}]));
+window.__TAURI_INTERNALS__={invoke:async(cmd,args)=>{window.requests.push({cmd,args});if(cmd==='workflow_import_preview')return {groups:args.input.groups.map(g=>({...g,existing_work_id:null,linkable_memory_ids:g.native_memory_ids,skipped:g.unmigrated_note_count?[{memory_id:null,reason:'unmigrated_note'}]:[]}))};if(cmd==='workflow_import_apply'){if(attempts++===0)throw Error('fixture timeout');return {works:[{}],linked_count:1,skipped:[{}]}}if(cmd==='workflow_link_list')return Array.from({length:22},(_,i)=>({id:'link-'+i,target_kind:'source',target_id:'source-'+i,target_title:'설계 자료 '+i,target_source:{provider:'obsidian',account_id:'local',external_id:'design-'+i,url:'obsidian://open?vault=test',kind:'note'},fetched_at:'2026-09-23T00:00:00Z',relation_type:'specification',reason:'설계 확인',version:1,removed_at:null,access_status:'accessible'})).slice(args.input.offset,args.input.offset+args.input.limit);if(cmd==='context_get')return {sources:[{source:{provider:'obsidian',account_id:'local',external_id:'design-'+args.request.source_id.replace('source-',''),url:'obsidian://open?vault=test',kind:'note'},title:'설계 자료',snippet:'현재 저장된 원본 발췌입니다.',access_status:'accessible',freshness:'stale'}],stale:true};if(cmd==='ui_memory_list')return [{id:'memory-1',title:'기존 결정 메모',memory:{retracted_at:null}}];if(cmd==='workflow_link_add')return {};throw Error(cmd)}};
+createRoot(document.getElementById('root')).render(React.createElement('main',{className:'workflow-page',style:{maxWidth:800,margin:'30px auto',fontFamily:'sans-serif'}},React.createElement('h1',null,'W1b 브라우저 fixture — 실제 Core 미연결'),React.createElement(ImportPanel,{onApplied:()=>{}}),React.createElement(LinksPanel,{workId:'test-work'})));
+</script></html>

@@ -36,7 +36,7 @@ pub const LEGACY_IPC_METHODS: [&str; 6] = [
     "connections.status",
 ];
 
-pub const IPC_METHODS: [&str; 23] = [
+pub const IPC_METHODS: [&str; 30] = [
     "context.search",
     "context.get",
     "memory.upsert",
@@ -53,6 +53,13 @@ pub const IPC_METHODS: [&str; 23] = [
     "workflow.save",
     "workflow.get",
     "workflow.list",
+    "work_link.add",
+    "work_link.remove",
+    "work_link.list",
+    "workflow.import.preview",
+    "workflow.import.apply",
+    "dashboard.get",
+    "workflow.activity.list",
     "plugins.list",
     "plugins.get",
     "plugins.add",
@@ -427,6 +434,34 @@ impl CoreClient {
 
 pub fn dispatch(core: &Core, method: &str, params: Value) -> CoreResult<Value> {
     match method {
+        "workflow.activity.list" => serde_json::to_value(
+            core.workflow_activity_list(serde_json::from_value(params).map_err(invalid_params)?)?,
+        )
+        .map_err(serialize_error),
+        "work_link.add" => serde_json::to_value(
+            core.workflow_link_add(serde_json::from_value(params).map_err(invalid_params)?)?,
+        )
+        .map_err(serialize_error),
+        "work_link.remove" => serde_json::to_value(
+            core.workflow_link_remove(serde_json::from_value(params).map_err(invalid_params)?)?,
+        )
+        .map_err(serialize_error),
+        "work_link.list" => serde_json::to_value(
+            core.workflow_link_list(serde_json::from_value(params).map_err(invalid_params)?)?,
+        )
+        .map_err(serialize_error),
+        "workflow.import.preview" => serde_json::to_value(
+            core.workflow_import_preview(serde_json::from_value(params).map_err(invalid_params)?)?,
+        )
+        .map_err(serialize_error),
+        "workflow.import.apply" => serde_json::to_value(
+            core.workflow_import_apply(serde_json::from_value(params).map_err(invalid_params)?)?,
+        )
+        .map_err(serialize_error),
+        "dashboard.get" => serde_json::to_value(
+            core.dashboard_get(serde_json::from_value(params).map_err(invalid_params)?)?,
+        )
+        .map_err(serialize_error),
         "workflow.save" => serde_json::to_value(
             core.workflow_save(serde_json::from_value(params).map_err(invalid_params)?)?,
         )

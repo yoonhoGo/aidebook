@@ -1,0 +1,9 @@
+{
+  "alertSetting" : 0,
+  "authorizationStatus" : 0,
+  "bundleIdentifier" : "com.yoonhogo.aidebook.notification-probe",
+  "deliveryVerified" : false,
+  "pendingCount" : 0,
+  "requestedAuthorization" : false,
+  "scheduledNotification" : false
+}

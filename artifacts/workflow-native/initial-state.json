@@ -1,0 +1,17 @@
+{
+  "id": "317954cf-6c28-4885-81c4-52ca2766e022",
+  "ok": false,
+  "error": {
+    "code": "permission_denied",
+    "message": "app 'aidebook' has visible windows but no accessibility window (AX reads stayed blocked for 1500ms after retries). macOS Accessibility may need Orca Computer Use toggled off and on again in System Settings.",
+    "data": {
+      "nextSteps": [
+        "Run `orca computer permissions --json`, or `orca computer permissions --id accessibility --json` / `--id screenshots --json` when the message names one missing permission.",
+        "For remote or SSH targets, verify the command is running inside an active graphical desktop session."
+      ]
+    }
+  },
+  "_meta": {
+    "runtimeId": "a5aa7dc7-4b34-49a8-800b-6781b81468d3"
+  }
+}
