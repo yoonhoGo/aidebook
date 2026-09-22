@@ -34,3 +34,21 @@ describe("graph integration adapter", () => {
     expect(model.demoEvents.every((event) => event.observer === "demo_fixture")).toBe(true);
   });
 });
+
+
+describe("information map layout", () => {
+  it("keeps many native references in separate, non-overlapping districts", () => {
+    const notes = Array.from({ length: 36 }, (_, index) => ({
+      ...note, id: index + 1, nativeId: `memory-${index}`,
+      nativeEvidence: [{ ...ref, external_id: `issue-${index}` }],
+    }));
+    const model = createGraphModel(0, notes, []);
+    const sources = model.nodes.filter((node) => node.kind === "source");
+    const memories = model.nodes.filter((node) => node.kind === "memory");
+    const request = model.nodes.find((node) => node.kind === "request")!;
+    expect(new Set(model.nodes.map(({ x, y, z }) => `${x}:${y}:${z}`)).size).toBe(model.nodes.length);
+    expect(Math.max(...sources.map((node) => node.x))).toBeLessThan(Math.min(...memories.map((node) => node.x)));
+    expect(request.x).toBeGreaterThan(Math.max(...memories.map((node) => node.x)));
+    expect(model.nodes.every(({ x, y, z }) => [x, y, z].every(Number.isFinite))).toBe(true);
+  });
+});

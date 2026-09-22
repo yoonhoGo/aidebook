@@ -595,7 +595,7 @@ pre { overflow: auto; padding: 18px; margin: 0; border-radius: 5px; background: 
 .graph-timeline small { margin-top: 3px; color: var(--muted); font-size: 10px; }
 .graph-output { min-height: 420px; overflow: hidden; border: 1px solid #263743; border-radius: 10px; background: var(--graph-ink); box-shadow: 0 16px 34px color-mix(in oklch, var(--fg) 11%, transparent); }
 .graph-canvas { position: relative; width: 100%; height: clamp(400px, 55vh, 620px); min-height: 400px; overflow: hidden; background: radial-gradient(circle at 50% 45%, #182630 0, #0e1821 38%, #0b1118 76%); }
-.graph-canvas > div { width: 100% !important; height: 100% !important; }
+.graph-canvas > .scene-container { width: 100% !important; height: 100% !important; }
 .graph-canvas canvas { display: block; width: 100% !important; height: 100% !important; }
 .graph-fallback { display: grid; min-height: 400px; align-content: center; justify-items: center; gap: 12px; padding: 30px; background: radial-gradient(circle at 50% 45%, #182630 0, #0b1118 72%); color: #d5e0e8; text-align: center; }
 .graph-fallback strong { color: #f2fbff; font-size: 15px; }
@@ -751,3 +751,81 @@ pre { overflow: auto; padding: 18px; margin: 0; border-radius: 5px; background: 
 .plugin-form input:not([type="checkbox"]), .plugin-form select { width: 100%; padding: 10px 12px; border: 1px solid var(--border, #ddd); border-radius: 6px; background: transparent; color: inherit; font: inherit; }
 .plugin-connection { border-top: 1px solid var(--border, #ddd); padding: 18px 0; overflow-wrap: anywhere; }
 .plugin-path { overflow-wrap: anywhere; }
+
+/* Quiet map chrome stays separate from the evidence/event color channel. */
+.graph-output { border-color: #253247; border-radius: 16px; box-shadow: 0 12px 32px #10182812; }
+.graph-canvas { height: clamp(460px, 62vh, 760px); background: #0c1420; }
+.graph-map-legend { position: absolute; top: 20px; left: 22px; display: flex; flex-wrap: wrap; gap: 16px; color: #a8b6c9; font-size: 11px; pointer-events: none; }
+.graph-map-legend span { display: inline-flex; align-items: center; gap: 7px; }
+.graph-map-legend i { width: 7px; height: 7px; display: inline-block; border-radius: 50%; background: #c5bbec; }
+.graph-map-legend .legend-source { border-radius: 2px; background: #8faee0; }
+.graph-map-legend .legend-candidate { border-radius: 1px; transform: rotate(45deg); background: #d1a667; }
+.graph-map-legend .legend-request { background: #a7b4c6; }
+.graph-camera-tools { position: absolute; bottom: 46px; left: 50%; transform: translateX(-50%); display: flex; gap: 4px; padding: 5px; border: 1px solid #334359; border-radius: 12px; background: #172232ed; box-shadow: 0 4px 20px #0003; white-space: nowrap; }
+.graph-camera-tools button { min-height: 36px; padding: 0 12px; border: 0; border-radius: 7px; background: transparent; color: #c2cedf; font: inherit; font-size: 11px; cursor: pointer; }
+.graph-camera-tools button:hover, .graph-camera-tools button[aria-pressed="true"] { background: #30425a; color: #fff; }
+.graph-camera-tools button:focus-visible { outline: 2px solid #b9cbea; outline-offset: 2px; }
+.graph-camera-tools button:disabled { opacity: .4; cursor: default; }
+.graph-map-help { position: absolute; bottom: 12px; width: 100%; margin: 0; text-align: center; color: #91a1b8; font-size: 10px; pointer-events: none; }
+.graph-map-empty { position: absolute; inset: 80px 24px 110px; display: grid; place-content: center; gap: 10px; text-align: center; color: #a8b6c9; font-size: 12px; pointer-events: none; }
+.graph-map-empty strong { color: #e0e7f1; font-size: 16px; }
+.graph-toolbar { border-radius: 12px; gap: 8px; }
+.graph-view-toggle { padding: 3px; border-radius: 9px; background: var(--fg-soft); gap: 2px; }
+.graph-view-toggle .btn { border: 0; border-radius: 7px; }
+.graph-notice { border: 0; background: transparent; padding: 6px 2px; font-size: 11px; }
+.graph-timeline li { border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; }
+@media (max-width: 600px) { .graph-map-legend { gap: 10px; left: 14px; } .graph-reading { padding: 20px 12px; } }
+
+.graph-timeline[hidden] { display: none; }
+.graph-reading .intro-section .tag-row { margin-top: 10px; }
+.graph-reading .intro-section .tag-row > .small { display: none; }
+.graph-reading h1 { font-size: 26px; }
+.graph-canvas { height: clamp(360px, calc(100vh - 355px), 760px); min-height: 360px; }
+
+/* Information map: index and spatial view form one navigation surface. */
+.map-explorer { display: grid; grid-template-columns: 210px minmax(0, 1fr); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; background: var(--surface); }
+.map-explorer .graph-output { min-width: 0; min-height: 360px; border: 0; border-left: 1px solid var(--border); border-radius: 0; box-shadow: none; background: #eef3f7; }
+.map-contents { display: flex; flex-direction: column; min-width: 0; max-height: clamp(360px, calc(100vh - 355px), 760px); padding: 18px 12px 10px; background: var(--surface); }
+.map-contents header { padding: 0 4px; }
+.map-contents .eyebrow { font-size: 9px; letter-spacing: .12em; }
+.map-contents h2 { margin: 6px 0; font: 600 16px var(--font-body); }
+.map-contents header p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
+.map-contents-search { margin: 14px 0 0; }
+.map-contents-search input { width: 100%; min-width: 0; padding: 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--fg); font: inherit; font-size: 12px; }
+.map-contents-count { margin: 9px 4px; font-size: 10px; color: var(--muted); line-height: 1.6; }
+.map-contents-scroll { overflow-y: auto; min-height: 0; scrollbar-width: thin; }
+.map-contents summary { display: flex; justify-content: space-between; padding: 12px 4px; cursor: pointer; font-size: 11px; font-weight: 600; }
+.map-contents summary::before { content: '›'; margin-right: 6px; }
+.map-contents details[open] > summary::before { content: '⌄'; }
+.map-contents summary span { margin-left: auto; color: var(--muted); }
+.map-contents-entry { width: 100%; display: flex; gap: 8px; align-items: flex-start; padding: 10px 7px; border: 1px solid transparent; border-radius: 7px; text-align: left; background: transparent; color: var(--fg); cursor: pointer; }
+.map-contents-entry > span:nth-child(2) { flex: 1; min-width: 0; }
+.map-contents-entry strong { display: block; font-size: 11px; font-weight: 500; line-height: 1.6; overflow-wrap: anywhere; }
+.map-contents-entry small { display: block; margin-top: 3px; color: var(--muted); font-size: 10px; }
+.map-contents-entry > span:last-child { color: var(--muted); font-size: 11px; }
+.map-contents-entry:hover { background: var(--fg-soft); }
+.map-contents-entry[aria-current] { background: var(--accent-soft); border-color: var(--border); }
+.map-entry-marker { width: 6px; height: 6px; margin-top: 6px; flex-shrink: 0; background: #8074af; border-radius: 50%; }
+.map-entry-source { background: #4379a6; border-radius: 1px; }
+.map-entry-candidate { background: #b38038; transform: rotate(45deg); border-radius: 1px; }
+.map-entry-request { background: #65798c; }
+.map-contents-empty { padding: 0 5px; color: var(--muted); font-size: 11px; line-height: 1.6; }
+.map-contents-related { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 14px; }
+.map-contents-related h3 { font-size: 11px; margin: 0 5px 8px; }
+.map-explorer .graph-canvas { background: #eef3f7; }
+.map-explorer .graph-map-legend { color: #526a7d; top: 16px; left: 16px; gap: 12px; }
+.map-explorer .legend-source { background: #4379a6; }
+.map-explorer .legend-memory { background: #8074af; }
+.map-explorer .legend-candidate { background: #b38038; }
+.map-explorer .legend-request { background: #65798c; }
+.map-explorer .graph-camera-tools { max-width: calc(100% - 24px); flex-wrap: wrap; justify-content: center; width: max-content; background: #ffffffed; border-color: #cedae3; box-shadow: 0 4px 16px #314a6210; }
+.map-explorer .graph-camera-tools button { color: #425b70; padding: 0 9px; }
+.map-explorer .graph-camera-tools button:hover, .map-explorer .graph-camera-tools button[aria-pressed="true"] { color: #1c3b53; background: #e0eaf1; }
+.map-explorer .graph-map-help { color: #657d8e; padding: 0 10px; }
+.map-explorer .graph-map-empty, .map-explorer .graph-map-empty strong { color: #425b70; }
+.graph-reading { container-type: inline-size; }
+@container (max-width: 660px) {
+  .map-explorer { grid-template-columns: 1fr; }
+  .map-contents { max-height: 240px; }
+  .map-explorer .graph-output { border-left: 0; border-top: 1px solid var(--border); }
+}

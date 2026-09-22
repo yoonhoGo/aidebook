@@ -63,13 +63,14 @@ export function graphLinkKindLabel(kind: GraphLinkKind) {
 }
 
 export function stablePosition(index: number, total: number, side: "source" | "memory" | "request") {
-  if (side === "request") return { x: 0, y: 0, z: 0 };
-  const angle = (index / Math.max(1, total)) * Math.PI * 2 - Math.PI / 2;
-  const radius = side === "source" ? 155 : 145;
+  // Separate map districts. Rows extend in depth instead of wrapping into a circle.
+  if (side === "request") return { x: 240, y: 36, z: 0 };
+  const columns = Math.max(1, Math.ceil(Math.sqrt(total)));
+  const rows = Math.ceil(total / columns);
   return {
-    x: Math.cos(angle) * radius + (side === "source" ? -35 : 35),
-    y: Math.sin(angle) * radius,
-    z: ((index % 3) - 1) * 54,
+    x: side === "source" ? -180 - (index % columns) * 110 : (index % columns) * 110,
+    y: side === "source" ? 0 : 24,
+    z: (Math.floor(index / columns) - (rows - 1) / 2) * 110,
   };
 }
 
@@ -175,6 +176,15 @@ export function createGraphModel(workIndex: number, notesForWork: Note[], source
       provenance: "demo_fixture",
     });
   }
+
+  // Native references are collected incrementally; position after deduplication.
+  for (const kind of ["source", "memory", "request"] as const) {
+    const district = nodes.filter((node) => node.kind === kind);
+    district.forEach((node, index) => Object.assign(node, stablePosition(index, district.length, kind)));
+  }
+
+  const request = nodes.find((node) => node.kind === "request");
+  if (request) request.x = Math.max(0, ...nodes.filter((node) => node.kind === "memory").map((node) => node.x)) + 180;
 
   return {
     nodes,
