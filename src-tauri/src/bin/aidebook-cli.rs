@@ -154,6 +154,10 @@ fn method_from_command(args: &[String]) -> Result<String, CoreError> {
                 Some("query") => "context.query.v1",
                 _ => return Err(usage("context search|get|query")),
             },
+            Some("workflow") => match args.get(1).map(String::as_str) {
+                Some("save") => "workflow.save", Some("get") => "workflow.get", Some("list") => "workflow.list",
+                _ => return Err(usage("workflow save|get|list --params JSON")),
+            },
             Some("memory") => match args.get(1).map(String::as_str) {
                 Some("upsert") => "memory.upsert",
                 Some("retract") => "memory.retract",

@@ -15,6 +15,8 @@ use std::path::Path;
 use std::sync::Mutex;
 use uuid::Uuid;
 
+pub mod workflow;
+
 const MIGRATIONS: &[(i64, &str)] = &[
     (
         1,
@@ -257,6 +259,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
             ON memory_candidates(state, updated_at DESC);
         "#,
     ),
+    (8, workflow::SCHEMA),
 ];
 
 #[derive(Debug)]

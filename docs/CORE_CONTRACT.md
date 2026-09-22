@@ -17,7 +17,7 @@ CLI JSON / MCP stdio ────────┼─ authenticated local IPC ─�
 
 M4부터 Tauri desktop 프로세스가 하나의 `Core`와 IPC owner를 함께 소유한다.
 CLI/MCP는 `docs/IPC_PROTOCOL.md`의 socket client이며 DB를 직접 열 수 없다.
-`Core`만 DB를 열고 변경한다. UI는 현재 `localStorage`를 계속 사용하며,
+`Core`만 DB를 열고 변경한다. 기존 메모 UI는 `localStorage`를 계속 사용하며,
 M0에서 자동으로 DB로 가져오거나 기존 UI 데이터를 삭제하지 않는다. 외부
 자료는 읽기 전용·비신뢰 데이터이고 외부 서비스에 쓰는 메서드나 토큰 필드는
 계약에 없다. 사용자가 명시적으로 선택한 provider 범위만 adapter가 읽는다.
@@ -161,6 +161,7 @@ transaction에서 적용한다.
   snapshot/link digests, stale markers, and bounded rebuild metadata
 - v6: graph edge source/target URLs for detecting URL retargets before rebuild
 - v7: persistent observations and review-gated memory candidates
+- v8: local `work_items`, `tasks`, `activity_events`; see [workflow contract](WORKFLOW_CONTRACT.md)
 
 마이그레이션 SQL, version 기록, commit이 하나의 transaction에 들어가므로
 실패하면 해당 version과 새 테이블이 함께 rollback된다. 외래 키를 켜며,
@@ -197,3 +198,7 @@ SQLite 파일을 직접 열지 않도록 코어 소유 프로세스와 소켓 �
 freshness·availability를 묶는 추가 read method다. 관찰·candidate transport는
 제안까지만 자동화할 수 있으며 canonical memory 승격은 generic transport에
 노출하지 않는다.
+
+## 업무와 할 일 (W1a)
+
+`workflow.save/get/list`와 Tauri 대응 명령은 같은 Core SQLite를 사용한다. 새 업무 화면은 localStorage에 업무 상태를 복제하지 않는다. 기존 메모/묶음 가져오기는 별도 명시 작업이다. 버전·멱등성·trusted 완료 검토 경계는 [업무 계약](WORKFLOW_CONTRACT.md), 실제 검증과 미완료 항목은 [검증 기록](WORKFLOW_VALIDATION.md)을 따른다.

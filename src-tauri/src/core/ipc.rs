@@ -36,7 +36,7 @@ pub const LEGACY_IPC_METHODS: [&str; 6] = [
     "connections.status",
 ];
 
-pub const IPC_METHODS: [&str; 20] = [
+pub const IPC_METHODS: [&str; 23] = [
     "context.search",
     "context.get",
     "memory.upsert",
@@ -50,6 +50,9 @@ pub const IPC_METHODS: [&str; 20] = [
     "candidate.propose",
     "candidate.get",
     "candidate.list",
+    "workflow.save",
+    "workflow.get",
+    "workflow.list",
     "plugins.list",
     "plugins.get",
     "plugins.add",
@@ -424,6 +427,18 @@ impl CoreClient {
 
 pub fn dispatch(core: &Core, method: &str, params: Value) -> CoreResult<Value> {
     match method {
+        "workflow.save" => serde_json::to_value(
+            core.workflow_save(serde_json::from_value(params).map_err(invalid_params)?)?,
+        )
+        .map_err(serialize_error),
+        "workflow.get" => serde_json::to_value(
+            core.workflow_get(serde_json::from_value(params).map_err(invalid_params)?)?,
+        )
+        .map_err(serialize_error),
+        "workflow.list" => serde_json::to_value(
+            core.workflow_list(serde_json::from_value(params).map_err(invalid_params)?)?,
+        )
+        .map_err(serialize_error),
         "context.search" => Ok(serde_json::to_value(core.context_search(
             serde_json::from_value::<SearchRequest>(params).map_err(invalid_params)?,
         )?)
@@ -577,6 +592,19 @@ fn handle_connection(
     core: &Core,
     plugins: Option<&super::local_sync::LocalSync>,
 ) {
+    // Accepted sockets inherit O_NONBLOCK on macOS. A request may arrive after
+    // accept, so each connection worker must wait for the newline-delimited body.
+    // Keep the listener nonblocking for shutdown and bound idle worker lifetime.
+    if stream.set_nonblocking(false).is_err()
+        || stream
+            .set_read_timeout(Some(Duration::from_secs(30)))
+            .is_err()
+        || stream
+            .set_write_timeout(Some(Duration::from_secs(30)))
+            .is_err()
+    {
+        return;
+    }
     let mut line = String::new();
     let response = match BufReader::new(&mut stream).read_line(&mut line) {
         Ok(_) => match serde_json::from_str::<IpcRequest>(&line) {
@@ -786,6 +814,37 @@ fn set_user_only(path: &Path) -> CoreResult<()> {
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicBool;
+
+    #[test]
+    fn accepted_socket_waits_for_delayed_workflow_request() {
+        let directory = PathBuf::from(format!("/tmp/aidebook-ipc-{}", Uuid::new_v4()));
+        fs::create_dir_all(&directory).unwrap();
+        let endpoint = CoreEndpoint::in_data_dir(&directory);
+        let core = Core::in_memory().unwrap();
+        let server = CoreServer::bind(endpoint.clone(), core, Some("test-secret".into())).unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let worker_stop = stop.clone();
+        let worker = thread::spawn(move || server.serve_until(worker_stop));
+        let mut stream = UnixStream::connect(&endpoint.socket_path).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        // macOS can inherit O_NONBLOCK from the listener. Let accept/read happen first.
+        thread::sleep(Duration::from_millis(100));
+        let write = stream.write_all(b"{\"id\":\"delayed\",\"token\":\"test-secret\",\"method\":\"workflow.list\",\"params\":{\"kind\":\"work\"}}\n");
+        let mut response = String::new();
+        let read = BufReader::new(stream).read_line(&mut response);
+        stop.store(true, Ordering::Relaxed);
+        worker.join().unwrap().unwrap();
+        fs::remove_dir_all(directory).unwrap();
+        assert!(
+            write.is_ok(),
+            "delayed write: {write:?}; response: {response}"
+        );
+        read.unwrap();
+        let value: Value = serde_json::from_str(&response).unwrap();
+        assert_eq!(value["result"], serde_json::json!([]), "{response}");
+    }
 
     #[test]
     fn authenticated_client_uses_one_owner_and_rejects_wrong_token() {

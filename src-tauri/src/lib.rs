@@ -608,6 +608,28 @@ fn core_restore(path: String, state: State<'_, AppState>) -> Result<core::Backup
     state.core.restore_from(path)
 }
 
+#[tauri::command]
+fn workflow_save(
+    input: core::WorkflowSaveInput,
+    state: State<'_, AppState>,
+) -> Result<core::WorkflowMutation, CoreError> {
+    state.core.workflow_review_save(input)
+}
+#[tauri::command]
+fn workflow_list(
+    input: core::WorkflowListInput,
+    state: State<'_, AppState>,
+) -> Result<Vec<core::WorkflowItem>, CoreError> {
+    state.core.workflow_list(input)
+}
+#[tauri::command]
+fn workflow_get(
+    input: core::WorkflowGetInput,
+    state: State<'_, AppState>,
+) -> Result<core::WorkflowItem, CoreError> {
+    state.core.workflow_get(input)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -680,6 +702,9 @@ pub fn run() {
             plugin_refresh,
             plugin_confluence_search,
             core_status,
+            workflow_save,
+            workflow_get,
+            workflow_list,
             vault_select,
             vault_scan,
             github_select,

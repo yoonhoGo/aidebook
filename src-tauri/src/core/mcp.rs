@@ -209,6 +209,36 @@ pub fn tool_descriptors() -> Vec<Value> {
                     json!({"state":{"type":["string","null"],"enum":["captured","distilled","proposed","accepted","rejected"]}}),
                     Vec::new(),
                 ),
+                "workflow.save" => (
+                    "Create or version-update a local work item or task. Full field replacement. Work completion requires desktop review; no external changes.",
+                    json!({
+                        "kind":{"type":"string","enum":["work","task"]},
+                        "id":{"type":["string","null"]},
+                        "expected_version":{"type":["integer","null"],"minimum":1},
+                        "idempotency_key":{"type":"string","minLength":1,"maxLength":200},
+                        "fields":{"type":"object","additionalProperties":false,"required":["title","status"],"properties":{
+                            "title":{"type":"string","minLength":1},
+                            "status":{"type":"string","enum":["planned","in_progress","review","on_hold","cancelled","done"]},
+                            "purpose":{"type":"string"},
+                            "blocked_reason":{"type":["string","null"]},
+                            "work_id":{"type":["string","null"]},
+                            "target_date":{"type":["string","null"],"description":"Local target date YYYY-MM-DD, never the remote due date"},
+                            "priority":{"type":"integer","minimum":0,"maximum":3},
+                            "time_blocks":{"type":"array","maxItems":100,"items":{"type":"object","additionalProperties":false,"required":["start","end"],"properties":{"start":{"type":"string","format":"date-time"},"end":{"type":"string","format":"date-time"}}}}
+                        }}
+                    }),
+                    vec!["kind","idempotency_key","fields"],
+                ),
+                "workflow.get" => (
+                    "Get one persistent work item or task.",
+                    json!({"kind":{"type":"string","enum":["work","task"]},"id":{"type":"string"}}),
+                    vec!["kind","id"],
+                ),
+                "workflow.list" => (
+                    "Page local work items or tasks, newest update first. work_id filters tasks only.",
+                    json!({"kind":{"type":"string","enum":["work","task"]},"work_id":{"type":["string","null"]},"limit":{"type":"integer","minimum":1,"maximum":100,"default":50},"offset":{"type":"integer","minimum":0,"default":0}}),
+                    vec!["kind"],
+                ),
                 "sources.refresh" => (
                     "Refresh an explicitly supplied read-only fixture through the Core.",
                     json!({"fixture_path":{"type":"string"}}),
@@ -232,7 +262,7 @@ pub fn tool_descriptors() -> Vec<Value> {
                     "type": "object",
                     "properties": properties,
                     "required": required,
-                    "additionalProperties": !name.starts_with("plugins.")
+                    "additionalProperties": !(name.starts_with("plugins.") || name.starts_with("workflow."))
                 }
             })
         })

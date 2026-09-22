@@ -3,6 +3,16 @@
 기준: `docs/ROADMAP.md`와 두 원문 기획 노트의 구체적인 MVP 설계를 우선했다.
 이 문서는 단계별 구현·검증 경계를 기록하며, native/live 경계는 별도로 표시한다.
 
+## 업무·할 일 W1a — 2026-09-23
+
+- [W0 계약·매핑](WORKFLOW_CONTRACT.md), [상세 검증](WORKFLOW_VALIDATION.md), jj `qoyspyzk`.
+- SQLite v8, 업무/할 일 생성·수정·완료 검토·재오픈, 목표일·우선순위·막힘·작업 시간 UI.
+- 공통 Core/Tauri/CLI/MCP API, 버전·멱등성·원자적 활동 기록. 기존 메모와 localStorage 보존.
+- Rust 86개, 기존 Vitest 8개, frontend/binaries 빌드, Pi 23개 도구 검증 통과.
+- 실제 CLI/MCP와 임시 Core 프로세스 재시작으로 저장 보존 확인. macOS IPC 지연 요청 오류를 재현·수정.
+- 브라우저 invoke fixture로 폼·목록·시간·완료/재오픈을 확인. native Tauri 화면 인수는 미완료.
+- W0 캘린더 공급자 확인·native 알림/수명, W1b 자료 연결·명시 가져오기, W2 이후는 남아 있다.
+
 ## Jira 개인 범위·Confluence — 2026-09-22
 
 - [구현 계획](ATLASSIAN_IMPLEMENTATION_PLAN.md)에 따라 서브에이전트 3개와 주 에이전트가 구현·통합했다.

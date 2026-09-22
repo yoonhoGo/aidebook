@@ -405,3 +405,25 @@ fn error_code(error: &CoreError) -> &'static str {
         CoreError::Provider { .. } => "provider",
     }
 }
+
+pub use db::workflow::{
+    TimeBlock, WorkflowFields, WorkflowGetInput, WorkflowItem, WorkflowKind, WorkflowListInput,
+    WorkflowMutation, WorkflowSaveInput,
+};
+impl Core {
+    pub fn workflow_save(&self, input: WorkflowSaveInput) -> CoreResult<WorkflowMutation> {
+        self.database.workflow_save(input, false)
+    }
+    pub(crate) fn workflow_review_save(
+        &self,
+        input: WorkflowSaveInput,
+    ) -> CoreResult<WorkflowMutation> {
+        self.database.workflow_save(input, true)
+    }
+    pub fn workflow_get(&self, input: WorkflowGetInput) -> CoreResult<WorkflowItem> {
+        self.database.workflow_get(input)
+    }
+    pub fn workflow_list(&self, input: WorkflowListInput) -> CoreResult<Vec<WorkflowItem>> {
+        self.database.workflow_list(input)
+    }
+}
