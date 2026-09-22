@@ -39,11 +39,16 @@ struct JsonRpcError {
 fn connection_properties() -> Value {
     json!({
         "id":{"type":"string","description":"Stable unique connection ID; use a new ID to add another vault/account."},
-        "provider":{"type":"string","enum":["obsidian","github","jira"]},
+        "provider":{"type":"string","enum":["obsidian","github","jira","confluence"]},
         "label":{"type":"string"},
-        "account":{"type":"string","description":"Empty for Obsidian, GitHub login or Jira email."},
+        "account":{"type":"string","description":"Empty for Obsidian, GitHub login or Atlassian email."},
         "scope":{"type":"string","description":"Absolute vault path, owner/repository, or https://tenant.atlassian.net."},
-        "project":{"type":"string","description":"Required Jira project key; otherwise empty."},
+        "project":{"type":"string","description":"Required only for Jira project scope."},
+        "jira_scope":{"type":"string","enum":["project","mine"],"description":"Legacy default project; choose mine for cross-project assigned/created issues."},
+        "jira_include_reporter":{"type":"boolean"},
+        "jira_include_parents":{"type":"boolean"},
+        "confluence_mode":{"type":"string","enum":["authored","watched","selected"]},
+        "confluence_page_ids":{"type":"array","items":{"type":"string"}},
         "auth":{"type":"string","enum":["local","gh_cli","token"]},
         "auto_sync":{"type":"boolean","default":true,"description":"Automatic refresh applies to local Obsidian vaults only."}
     })
@@ -55,7 +60,7 @@ pub fn tool_descriptors() -> Vec<Value> {
         .map(|name| {
             let (description, properties, required) = match *name {
                 "plugins.list" => (
-                    "List saved Aidebook source connections (Obsidian, GitHub, Jira), without credentials.",
+                    "List saved Aidebook source connections (Obsidian, GitHub, Jira, Confluence), without credentials.",
                     json!({}), Vec::new(),
                 ),
                 "plugins.get" => (
@@ -79,6 +84,10 @@ pub fn tool_descriptors() -> Vec<Value> {
                 "plugins.remove" => (
                     "Disconnect the explicitly selected source connection and stop its automatic refresh. Preserve source files, cached evidence, memories and credentials.",
                     json!({"id":{"type":"string"}}), vec!["id"],
+                ),
+                "plugins.confluence.search" => (
+                    "Search accessible Confluence pages using a saved connection. Returns candidates only; does not index or select pages. Save selected page IDs with plugins.update then plugins.refresh.",
+                    json!({"id":{"type":"string"},"query":{"type":"string","minLength":1,"maxLength":500}}), vec!["id","query"],
                 ),
                 "plugins.refresh" => (
                     "Read and index the actual saved vault/repository/project using its existing authentication. Does not write to source files or remote providers.",

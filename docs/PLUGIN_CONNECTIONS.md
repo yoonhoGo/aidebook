@@ -1,6 +1,6 @@
 # 플러그인 연결과 인증
 
-검토일: 2026-09-21. 우선 대상은 **Obsidian → GitHub → Jira**다.
+검토일: 2026-09-21. 우선 대상은 **Obsidian → GitHub → Jira → Confluence**다.
 외부 시스템에는 쓰지 않으며, 로컬 경로 연결은 네트워크 로그인에 의존하지 않는다.
 
 ## 구현
@@ -16,9 +16,12 @@
   사용한다. 볼트별 namespace가 달라 동일 상대 경로의 문서가 충돌하지 않는다.
 - GitHub는 기존 읽기 adapter에 연결별 계정·저장소를 전달한다.
   `/user` 응답으로 토큰 계정과 선택 계정이 일치하는지 확인한다.
-- Jira Cloud는 선택 프로젝트의 `POST /rest/api/3/search/jql` 조회만 사용한다.
-  제목·상태·수정 시각·원문 링크를 저장하며 `nextPageToken`을 순회한다.
-  다른 프로젝트의 결과, 반복 cursor, 불완전 페이지는 실패 처리한다.
+- Jira Cloud는 `POST /rest/api/3/search/jql`로 프로젝트 또는 내 생성·담당 티켓을 조회한다.
+  보고자 포함과 상위 티켓 포함을 선택할 수 있다. 기존 연결은 프로젝트 범위를 유지한다.
+  상위 티켓은 프로젝트를 넘어 조회하며 제목·상태·수정 시각·원문과 부모 링크를 저장한다.
+  반복 cursor, 불완전 페이지, 접근 불가 상위 티켓은 전체 수집을 실패 처리한다.
+- Confluence Cloud는 작성/Watch CQL 또는 선택 ID로 페이지를 읽는다. 검색은 후보만 반환하고
+  선택 ID 저장 후 수동 읽기를 실행한다. storage 본문은 실행하지 않는 텍스트로 변환한다.
 - 토큰은 연결별 macOS Keychain 항목에 저장한다. 기존 Keychain service/account
   규칙을 유지하면서 `security` 프로세스의 prompt 의존을 native Security
   Framework API로 교체했다. UI에는 password 입력을 사용하고 localStorage,
@@ -192,3 +195,38 @@ JSON 인수는 stdin으로 전달한다. `describe`로 현재 도구 목록을 �
 유지하고 CLI로 bbros를 추가했으며, 설치된 MCP `plugins.list/refresh`로 두 연결과 bbros
 732개 색인·접근 불가 0개를 확인했다. native 연결 화면에서도 두 vault의 자동 갱신이
 표시되었다. 위 수치는 해당 시점의 검증 결과다. Codex의 새 대화에서 새 도구 목록을 불러온다.
+
+
+## Jira 개인 범위 / Confluence — 2026-09-22
+
+구현 계획: [ATLASSIAN_IMPLEMENTATION_PLAN.md](ATLASSIAN_IMPLEMENTATION_PLAN.md).
+
+- 연결 화면의 **설정 편집**에서 기존 Jira 연결을 `내 티켓`으로 전환할 수 있다.
+  신규 UI 연결은 내 티켓 + 상위 티켓 포함이 기본이다. reporter는 creator와 구분한다.
+- Jira 상위 티켓은 20단계까지 수집하고 중복/순환을 막는다. 부모 key/URL을 원문 근거로
+  보존하지만 별도 canonical Relation 생성이나 계층 트리 전용 UI는 이번 범위가 아니다.
+- Confluence는 사이트·계정 이메일·개인 API token 연결을 저장하고 인증 정보를 설정한다.
+  `검색 / URL로 선택한 문서`를 선택하면 저장된 계정으로 검색하거나 같은 사이트의
+  `/wiki/spaces/.../pages/ID/...`, `/wiki/pages/viewpage.action?pageId=ID` 또는 ID를 추가한다.
+  선택 범위를 저장한 다음 `읽기 / 다시 확인`을 누른다. 검색만으로는 색인하지 않는다.
+- Watch는 구독 상태이며 최근 열람 기록은 포함하지 않는다. 첨부파일/매크로 실행은 미지원이다.
+- Jira·Confluence 모두 수동 갱신이다. 범위 축소나 선택 해제는 다음 수집 범위를 바꾸며,
+  이미 색인한 원문 캐시와 메모를 삭제하지 않는다.
+- 인증은 기존 사이트 직접 접근용 unscoped token 방식이다. OAuth/cloudId/scoped token은 미지원이다.
+
+CLI 예시:
+
+```sh
+aidebook-cli plugins add --id my-jira --provider jira --label '내 티켓' \
+  --account me@example.com --scope https://TEAM.atlassian.net \
+  --jira-scope mine --jira-include-parents true
+aidebook-cli plugins update --id my-jira --jira-include-reporter true
+aidebook-cli plugins search --id my-confluence --query '설계'
+aidebook-cli plugins update --id my-confluence --confluence-mode selected --confluence-page-ids 123,456
+aidebook-cli plugins refresh --id my-confluence
+```
+
+CLI는 `--project`가 있으면 project, 없으면 mine을 사용하며 상위 포함은 명시적으로 켠다.
+MCP `plugins.confluence.search`는 `{ "id": "my-confluence", "query": "설계" }`를 받는다.
+`plugins.add/update`의 추가 필드는 계획 문서의 데이터 계약과 같다.
+앱/bridge 업데이트 후 새 에이전트 세션에서 갱신된 도구 목록을 사용한다.

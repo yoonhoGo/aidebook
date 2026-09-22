@@ -36,7 +36,7 @@ pub const LEGACY_IPC_METHODS: [&str; 6] = [
     "connections.status",
 ];
 
-pub const IPC_METHODS: [&str; 19] = [
+pub const IPC_METHODS: [&str; 20] = [
     "context.search",
     "context.get",
     "memory.upsert",
@@ -56,6 +56,7 @@ pub const IPC_METHODS: [&str; 19] = [
     "plugins.update",
     "plugins.remove",
     "plugins.refresh",
+    "plugins.confluence.search",
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -523,6 +524,18 @@ fn dispatch_plugins(
     #[serde(deny_unknown_fields)]
     struct Empty {}
     match method {
+        "plugins.confluence.search" => {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Search {
+                id: String,
+                query: String,
+            }
+            let input: Search = serde_json::from_value(params).map_err(invalid_params)?;
+            let connection = plugins.connection(&input.id)?;
+            serde_json::to_value(super::confluence::search(&connection, &input.query)?)
+                .map_err(serialize_error)
+        }
         "plugins.list" => {
             let _: Empty = serde_json::from_value(params).map_err(invalid_params)?;
             serde_json::to_value(plugins.connections()?).map_err(serialize_error)

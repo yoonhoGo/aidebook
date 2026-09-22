@@ -202,6 +202,20 @@ fn plugin_token_set(
     core::plugins::set_token(&connection, &token)
 }
 #[tauri::command]
+async fn plugin_confluence_search(
+    id: String,
+    query: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<core::confluence::ConfluenceSearchResult>, CoreError> {
+    let local_sync = state.local_sync.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        core::confluence::search(&local_sync.connection(&id)?, &query)
+    })
+    .await
+    .map_err(|_| plugin_lock_error())?
+}
+
+#[tauri::command]
 async fn plugin_refresh(
     id: String,
     state: State<'_, AppState>,
@@ -664,6 +678,7 @@ pub fn run() {
             plugin_remove,
             plugin_token_set,
             plugin_refresh,
+            plugin_confluence_search,
             core_status,
             vault_select,
             vault_scan,

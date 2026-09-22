@@ -291,3 +291,78 @@ fn unavailable_vault_can_be_renamed_paused_and_removed_without_resolving_its_pat
     f.cli_json(&["plugins", "remove", "--id", "offline"]);
     assert!(f.sync.connections().unwrap().is_empty());
 }
+
+#[test]
+fn atlassian_scopes_roundtrip_through_cli_mcp_and_saved_registry() {
+    let f = Fixture::new();
+    let legacy = f.client.call("plugins.add", json!({"id":"legacy-jira","provider":"jira","label":"Legacy","account":"me@example.com","scope":"https://example.atlassian.net","project":"TEAM","auth":"token"})).unwrap();
+    assert_eq!(legacy["jira_scope"], "project");
+    let mine = f.cli_json(&[
+        "plugins",
+        "add",
+        "--id",
+        "mine",
+        "--provider",
+        "jira",
+        "--label",
+        "My issues",
+        "--account",
+        "me@example.com",
+        "--scope",
+        "https://example.atlassian.net",
+        "--jira-scope",
+        "mine",
+        "--jira-include-parents",
+        "true",
+    ]);
+    assert_eq!(mine["jira_scope"], "mine");
+    assert_eq!(mine["jira_include_parents"], true);
+    let patched = f.mcp(
+        "plugins.update",
+        json!({"id":"mine","changes":{"jira_include_reporter":true}}),
+    );
+    assert_eq!(patched["jira_include_parents"], true);
+    assert_eq!(patched["jira_include_reporter"], true);
+    let pages = f.cli_json(&[
+        "plugins",
+        "add",
+        "--id",
+        "pages",
+        "--provider",
+        "confluence",
+        "--label",
+        "Pages",
+        "--account",
+        "me@example.com",
+        "--scope",
+        "https://example.atlassian.net",
+        "--confluence-mode",
+        "selected",
+        "--confluence-page-ids",
+        "123,456",
+    ]);
+    assert_eq!(pages["confluence_page_ids"], json!(["123", "456"]));
+    let updated = f.cli_json(&[
+        "plugins",
+        "update",
+        "--id",
+        "pages",
+        "--confluence-mode",
+        "watched",
+    ]);
+    assert_eq!(updated["confluence_mode"], "watched");
+    assert_eq!(updated["confluence_page_ids"], json!(["123", "456"]));
+    let saved = PluginRegistry::open(f.root.join("connections.json")).unwrap();
+    assert_eq!(
+        serde_json::to_value(saved.get("mine").unwrap()).unwrap()["jira_scope"],
+        "mine"
+    );
+    // Wrong-provider search must fail before credential/network access.
+    assert!(f
+        .client
+        .call(
+            "plugins.confluence.search",
+            json!({"id":"mine","query":"hello"})
+        )
+        .is_err());
+}

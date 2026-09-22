@@ -41,6 +41,11 @@ impl Fixture {
                 account: String::new(),
                 scope: path.to_str().unwrap().into(),
                 project: String::new(),
+                jira_scope: Default::default(),
+                jira_include_reporter: false,
+                jira_include_parents: false,
+                confluence_mode: Default::default(),
+                confluence_page_ids: vec![],
                 auth: AuthMethod::Local,
                 auto_sync: true,
             })

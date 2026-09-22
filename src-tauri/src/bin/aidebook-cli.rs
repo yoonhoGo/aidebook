@@ -55,6 +55,7 @@ fn run_cli(args: &[String]) -> Result<Value, CoreError> {
     let method = method_from_command(args)?;
     let params = match method.as_str() {
         "plugins.list" => json!({}),
+        "plugins.confluence.search" => json!({"id":required_flag(args,"--id")?,"query":required_flag(args,"--query")?}),
         "plugins.get" | "plugins.remove" | "plugins.refresh" => json!({"id": required_flag(args, "--id")?}),
         "plugins.add" => {
             let provider = required_flag(args, "--provider")?;
@@ -65,6 +66,11 @@ fn run_cli(args: &[String]) -> Result<Value, CoreError> {
                 "scope":required_flag(args,"--scope")?, "provider":provider, "auth":auth,
                 "account":flag_value(args,"--account").unwrap_or_default(),
                 "project":flag_value(args,"--project").unwrap_or_default(),
+                "jira_scope":flag_value(args,"--jira-scope").unwrap_or_else(|| if flag_value(args,"--project").is_some() {"project"} else {"mine"}.into()),
+                "jira_include_reporter":bool_flag(args,"--jira-include-reporter")?.unwrap_or(false),
+                "jira_include_parents":bool_flag(args,"--jira-include-parents")?.unwrap_or(false),
+                "confluence_mode":flag_value(args,"--confluence-mode").unwrap_or_else(|| "authored".into()),
+                "confluence_page_ids":flag_value(args,"--confluence-page-ids").map(|s| s.split(',').map(str::to_string).collect::<Vec<_>>()).unwrap_or_default(),
                 "auto_sync":bool_flag(args,"--auto-sync")?.unwrap_or(true)})
         }
         "plugins.update" => {
@@ -73,6 +79,16 @@ fn run_cli(args: &[String]) -> Result<Value, CoreError> {
                 if let Some(value) = flag_value(args, &format!("--{key}")) { changes.insert(key.into(), json!(value)); }
             }
             if let Some(value) = bool_flag(args, "--auto-sync")? { changes.insert("auto_sync".into(), json!(value)); }
+            for key in ["jira_scope", "confluence_mode"] {
+                if let Some(value) = flag_value(args, &format!("--{}", key.replace('_', "-"))) { changes.insert(key.into(), json!(value)); }
+            }
+            for key in ["jira_include_reporter", "jira_include_parents"] {
+                if let Some(value) = bool_flag(args, &format!("--{}", key.replace('_', "-")))? { changes.insert(key.into(), json!(value)); }
+            }
+            if let Some(value) = flag_value(args, "--confluence-page-ids") {
+                let ids: Vec<_> = value.split(',').filter(|v| !v.is_empty()).collect();
+                changes.insert("confluence_page_ids".into(), json!(ids));
+            }
             if changes.is_empty() { return Err(usage("plugins update requires changed fields or --params JSON")); }
             json!({"id":required_flag(args,"--id")?,"changes":changes})
         }
@@ -129,7 +145,8 @@ fn method_from_command(args: &[String]) -> Result<String, CoreError> {
                 Some("update") => "plugins.update",
                 Some("remove") => "plugins.remove",
                 Some("refresh") => "plugins.refresh",
-                _ => return Err(usage("plugins list|get|add|update|remove|refresh")),
+                Some("search") => "plugins.confluence.search",
+                _ => return Err(usage("plugins list|get|add|update|remove|refresh|search")),
             },
             Some("context") => match args.get(1).map(String::as_str) {
                 Some("search") => "context.search",
@@ -161,7 +178,7 @@ fn method_from_command(args: &[String]) -> Result<String, CoreError> {
                 "connections.status"
             }
             _ => return Err(usage(
-                "context search|get|query, memory upsert|retract, observation capture|get, candidate distill|get|list|propose, sources refresh, connections status, or plugins list|get|add|update|remove|refresh",
+                "context search|get|query, memory upsert|retract, observation capture|get, candidate distill|get|list|propose, sources refresh, connections status, or plugins list|get|add|update|remove|refresh|search",
             )),
         };
     Ok(method.to_string())

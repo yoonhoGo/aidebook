@@ -3,6 +3,20 @@
 기준: `docs/ROADMAP.md`와 두 원문 기획 노트의 구체적인 MVP 설계를 우선했다.
 이 문서는 단계별 구현·검증 경계를 기록하며, native/live 경계는 별도로 표시한다.
 
+## Jira 개인 범위·Confluence — 2026-09-22
+
+- [구현 계획](ATLASSIAN_IMPLEMENTATION_PLAN.md)에 따라 서브에이전트 3개와 주 에이전트가 구현·통합했다.
+- Jira 프로젝트/내 티켓 모드, 선택적 보고자·상위 티켓 포함, 기존 프로젝트 연결 호환.
+- Confluence 작성/Watch/선택 모드, 검색 후보 선택·같은 사이트 URL/ID 추가 및 본문 색인.
+- 연결 편집 UI, Tauri 검색 명령, MCP `plugins.confluence.search`, CLI `plugins search` 및 설정 옵션.
+- 전체 Rust 테스트 통과. 후속 Jira·Confluence 단위 회귀도 통과. CLI/MCP 설정 영구 저장 통합 검증 포함.
+- Vitest 7개와 TypeScript/Vite build 통과. Pi 확장 20개 도구 등록·호출·취소 검증 통과.
+- `cargo fmt -- --check`, `git diff --check` 검사. Vite 기존 graph chunk 크기 경고 유지.
+- 엄격한 Clippy는 기존 db/obsidian/types/mod의 lint 때문에 실패했다. 신규 Confluence trim lint는 수정했다.
+- 실제 Jira·Confluence 계정, native UI/Keychain, release 앱 재설치·배포는 미검증/미실행이다.
+- 상위 관계는 parent key/URL로 보존하며 canonical graph Relation이나 전용 트리 UI는 없다.
+  최근 열람 기록·OAuth/scoped token·원격 자동 갱신은 미지원이다. 선택 해제는 기존 캐시를 삭제하지 않는다.
+
 ## MCP·CLI 플러그인 연결 관리 — 2026-09-22
 
 - `plugins.list/get/add/update/remove/refresh` 6개 도구와 CLI 하위 명령 추가.

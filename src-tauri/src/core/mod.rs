@@ -6,6 +6,7 @@
 //! guarded local memory mutations. No provider token or external write is
 //! accepted by this API.
 
+pub mod confluence;
 mod db;
 pub mod fixtures;
 pub mod github;
