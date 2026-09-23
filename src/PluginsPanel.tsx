@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { invoke, isTauri } from "@tauri-apps/api/core";
+import "./ConnectionsPanels.css";
 
 type Provider = "obsidian" | "github" | "jira" | "confluence";
 type Connection = { id: string; provider: Provider; label: string; account: string; scope: string; project: string; auth: "local" | "gh_cli" | "token"; auto_sync: boolean; jira_scope: "mine" | "project"; jira_include_reporter: boolean; jira_include_parents: boolean; confluence_mode: "authored" | "watched" | "selected"; confluence_page_ids: string[] };
@@ -54,7 +55,10 @@ export default function PluginsPanel() {
   function editConnection(connection: Connection) {
     setDraft({ ...connection, jira_scope: connection.jira_scope ?? "project", jira_include_reporter: connection.jira_include_reporter ?? false, jira_include_parents: connection.jira_include_parents ?? false, confluence_mode: connection.confluence_mode ?? "authored", confluence_page_ids: connection.confluence_page_ids ?? [] });
     setResults([]); setQuery(""); setPageInput(""); setMessage("");
-    requestAnimationFrame(() => formRef.current?.scrollIntoView({ block: "start", behavior: "smooth" }));
+    requestAnimationFrame(() => {
+      const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches || document.body.classList.contains("reduce-motion");
+      formRef.current?.scrollIntoView({ block: "start", behavior: reducedMotion ? "auto" : "smooth" });
+    });
   }
   async function load() { setConnections(await invoke<Connection[]>("plugin_list")); }
   useEffect(() => { if (native) void load().catch(e => setMessage(errorMessage(e))); }, [native]);
@@ -140,29 +144,48 @@ export default function PluginsPanel() {
     if (!/^\d+$/.test(id)) { setMessage("페이지 ID 또는 연결한 사이트의 /pages/ID, viewpage.action?pageId=ID 주소를 입력하세요."); return; }
     selectPage(id, true); setPageInput(""); setMessage("선택 목록에 추가했습니다. 연결 범위를 저장한 뒤 읽기를 실행하세요.");
   }
-  return <div className="page"><section className="section overview-section"><div className="container">
-    <p className="eyebrow">플러그인 / 읽기 전용 연결</p><h1>연결 관리</h1>
+  return <div className="page plugin-page" aria-busy={busy || undefined}><section className="section overview-section plugin-overview"><div className="container">
+    <p className="eyebrow">플러그인 / 읽기 전용 연결</p><h1 id="plugin-panel-title">연결 관리</h1>
     <p className="muted">Obsidian 로컬 경로를 먼저 읽습니다. 같은 플러그인에 여러 계정과 경로를 추가할 수 있습니다.</p>
-    {!native && <div className="notice">브라우저 미리보기입니다. 실제 경로 연결과 인증은 데스크톱 앱에서 사용할 수 있습니다.</div>}
-    <div className="connection-list">{order.map(provider => <article className="card" key={provider}>
-      <div className="row-between"><h2>{names[provider]}</h2><span className="tag">{provider === "obsidian" ? "로컬 우선 · 인증 불필요" : "읽기 전용"}</span></div>
-      <p>{provider === "obsidian" ? "명시적으로 추가한 볼트의 Markdown 문서" : provider === "github" ? "계정별 저장소의 이슈·PR·댓글" : provider === "jira" ? "보드·프로젝트에 관계없이 내가 생성하거나 담당하는 티켓과 상위 티켓" : "내가 작성하거나 Watch 중인 문서, 검색해서 선택한 문서"}</p>
-      {connections.filter(c => c.provider === provider).map(c => <div className="plugin-connection" key={c.id}>
-        <strong>{c.label}</strong><p className="small">{c.account && `${c.account} · `}{c.scope}{c.provider === "jira" ? ` · ${c.jira_scope === "mine" ? "내 티켓" : c.project}${c.jira_include_parents ? " · 상위 티켓 포함" : ""}` : c.project && ` · ${c.project}`}{c.provider === "confluence" && ` · ${{ authored: "내가 작성", watched: "Watch 중", selected: "선택한 문서" }[c.confluence_mode ?? "authored"]}`}</p>
-        <p className="small muted">{c.auth === "local" ? "로컬 경로" : c.auth === "gh_cli" ? "기존 GitHub CLI 인증 재사용" : "연결 전용 Keychain 토큰"}</p>
-        {c.provider === "obsidian" && <label className="small"><input type="checkbox" checked={c.auto_sync} disabled={!native || busy} onChange={() => void toggleSync(c)} /> 자동 갱신 · 앱 실행 중 10초 간격 · 관계도 함께 반영</label>}
-        <p className="small" role="status">{c.provider === "obsidian" ? (syncStatuses[c.id] ? syncLabel(syncStatuses[c.id]) : c.auto_sync ? "첫 자동 확인 대기 중" : "자동 갱신 꺼짐 · 수동 읽기 가능") : statuses[c.id] ?? "저장된 연결 · 이 화면에서 아직 확인하지 않음"}</p>
-        {c.provider === "obsidian" && !c.auto_sync && <p className="small muted">자동 갱신이 꺼져 있습니다.</p>}
-        <div className="card-actions"><button className="btn btn-ghost" disabled={!native || busy} onClick={() => editConnection(c)}>범위 수정</button><button className="btn btn-secondary" disabled={!native || busy} onClick={() => { setBusy(true); void refresh(c).finally(() => setBusy(false)); }}>읽기 / 다시 확인</button>
-          {c.auth === "token" && <button className="btn btn-ghost" disabled={!native || busy} onClick={() => { setToken(""); setTokenId(c.id); }}>인증 정보 설정</button>}
-          <button className="btn btn-ghost" disabled={!native || busy} onClick={() => { setDeleteCredential(false); setRemoveId(c.id); }}>연결 해제</button></div>
-      </div>)}
-      {!connections.some(c => c.provider === provider) && <p className="small muted">아직 연결한 계정이나 경로가 없습니다.</p>}
-      <button className="btn btn-secondary" disabled={!native || busy} onClick={() => editConnection(empty(provider))}>{names[provider]} 연결 추가</button>
-      {legacy[provider] && <button className="btn btn-ghost" disabled={!native || busy} onClick={() => editConnection({ ...empty(provider), scope: legacy[provider]!, label: `이전 ${names[provider]} 연결` })}>이전 선택 범위 가져오기</button>}
-    </article>)}</div>
-    <button className="btn btn-secondary" disabled={!native || busy || !connections.length} onClick={() => void refreshAll()}>전체 읽기 · 로컬부터</button>
-    <form ref={formRef} className="card plugin-form" onSubmit={add}><h2>{names[draft.provider]} 연결 {draft.id ? "수정" : "추가"}</h2>
+    {!native && <div className="notice plugin-preview-notice" role="note">브라우저 미리보기입니다. 실제 경로 연결과 인증은 데스크톱 앱에서 사용할 수 있습니다.</div>}
+    <div className="plugin-list-heading">
+      <div><h2 id="plugin-list-title">연결된 자료</h2><p>연결별 범위와 마지막 확인 상태를 관리합니다.</p></div>
+      <button type="button" className="btn btn-secondary" disabled={!native || busy || !connections.length} onClick={() => void refreshAll()}>전체 읽기 · 로컬부터</button>
+    </div>
+    <div className="connection-list" role="list" aria-labelledby="plugin-list-title">
+      {order.map(provider => <article className="plugin-provider-group" key={provider} role="listitem" aria-labelledby={`plugin-provider-${provider}`}>
+        <div className="plugin-provider-heading">
+          <div>
+            <div className="plugin-provider-title"><h3 id={`plugin-provider-${provider}`}>{names[provider]}</h3><span className="tag">{provider === "obsidian" ? "로컬 우선 · 인증 불필요" : "읽기 전용"}</span></div>
+            <p className="plugin-provider-description">{provider === "obsidian" ? "명시적으로 추가한 볼트의 Markdown 문서" : provider === "github" ? "계정별 저장소의 이슈·PR·댓글" : provider === "jira" ? "보드·프로젝트에 관계없이 내가 생성하거나 담당하는 티켓과 상위 티켓" : "내가 작성하거나 Watch 중인 문서, 검색해서 선택한 문서"}</p>
+          </div>
+          <div className="plugin-provider-actions">
+            <button type="button" className="btn btn-secondary" disabled={!native || busy} onClick={() => editConnection(empty(provider))}>{names[provider]} 연결 추가</button>
+            {legacy[provider] && <button type="button" className="btn btn-ghost" disabled={!native || busy} onClick={() => editConnection({ ...empty(provider), scope: legacy[provider]!, label: `이전 ${names[provider]} 연결` })}>이전 선택 범위 가져오기</button>}
+          </div>
+        </div>
+        <div className="plugin-connection-list" role="list">
+          {connections.filter(c => c.provider === provider).map(c => <div className="plugin-connection-row" key={c.id} role="listitem" aria-labelledby={`plugin-connection-${c.id}`}>
+            <div className="plugin-connection-copy">
+              <h4 id={`plugin-connection-${c.id}`}>{c.label}</h4>
+              <p>{c.account && `${c.account} · `}{c.scope}{c.provider === "jira" ? ` · ${c.jira_scope === "mine" ? "내 티켓" : c.project}${c.jira_include_parents ? " · 상위 티켓 포함" : ""}` : c.project && ` · ${c.project}`}{c.provider === "confluence" && ` · ${{ authored: "내가 작성", watched: "Watch 중", selected: "선택한 문서" }[c.confluence_mode ?? "authored"]}`}</p>
+              <p className="plugin-connection-auth">{c.auth === "local" ? "로컬 경로" : c.auth === "gh_cli" ? "기존 GitHub CLI 인증 재사용" : "연결 전용 Keychain 토큰"}</p>
+            </div>
+            <p className="plugin-connection-status">{c.provider === "obsidian" ? (syncStatuses[c.id] ? syncLabel(syncStatuses[c.id]) : c.auto_sync ? "첫 자동 확인 대기 중" : "자동 갱신 꺼짐 · 수동 읽기 가능") : statuses[c.id] ?? "저장된 연결 · 이 화면에서 아직 확인하지 않음"}</p>
+            {c.provider === "obsidian" && <label className="plugin-toggle-row" htmlFor={`auto-sync-${c.id}`}><input id={`auto-sync-${c.id}`} type="checkbox" checked={c.auto_sync} disabled={!native || busy} onChange={() => void toggleSync(c)} />자동 갱신 · 앱 실행 중 10초 간격 · 관계도 함께 반영</label>}
+            <div className="plugin-connection-actions">
+              <button type="button" className="btn btn-ghost" disabled={!native || busy} aria-label={`${c.label} 연결 범위 수정`} onClick={() => editConnection(c)}>범위 수정</button>
+              <button type="button" className="btn btn-secondary" disabled={!native || busy} aria-label={`${c.label} 읽기 또는 다시 확인`} onClick={() => { setBusy(true); void refresh(c).finally(() => setBusy(false)); }}>읽기 / 다시 확인</button>
+              {c.auth === "token" && <button type="button" className="btn btn-ghost" disabled={!native || busy} aria-label={`${c.label} 인증 정보 설정`} onClick={() => { setToken(""); setTokenId(c.id); }}>인증 정보 설정</button>}
+              <button type="button" className="btn btn-ghost" disabled={!native || busy} aria-label={`${c.label} 연결 해제`} onClick={() => { setDeleteCredential(false); setRemoveId(c.id); }}>연결 해제</button>
+            </div>
+          </div>)}
+        </div>
+        {!connections.some(c => c.provider === provider) && <p className="plugin-empty-state">아직 연결한 계정이나 경로가 없습니다.</p>}
+      </article>)}
+    </div>
+    <form ref={formRef} className="card plugin-form" aria-labelledby="plugin-form-title" onSubmit={add}>
+      <h2 id="plugin-form-title">{names[draft.provider]} 연결 {draft.id ? "수정" : "추가"}</h2>
       <label>플러그인<select value={draft.provider} disabled={!native || busy || !!draft.id} onChange={e => setDraft(empty(e.target.value as Provider))}>{order.map(p => <option key={p} value={p}>{names[p]}</option>)}</select></label>
       <label>연결 이름<input value={draft.label} onChange={e => setDraft({ ...draft, label: e.target.value })} placeholder="개인 / 회사 / 연구 노트" /></label>
       {draft.provider !== "obsidian" && <label>{draft.provider === "github" ? "GitHub 로그인 계정 (저장소 소유자와 별개)" : "Atlassian 계정 이메일"}<input required value={draft.account} disabled={busy} onChange={e => { setDraft({ ...draft, account: e.target.value }); setResults([]); }} /></label>}
@@ -170,8 +193,8 @@ export default function PluginsPanel() {
       {draft.provider === "jira" && <>
         <label>가져올 티켓<select value={draft.jira_scope} onChange={e => setDraft({ ...draft, jira_scope: e.target.value as Connection["jira_scope"] })}><option value="mine">내가 생성하거나 담당하는 티켓 · 모든 프로젝트</option><option value="project">특정 프로젝트</option></select></label>
         {draft.jira_scope === "project" && <label>프로젝트 키<input required value={draft.project} onChange={e => setDraft({ ...draft, project: e.target.value })} placeholder="PROJ" /></label>}
-        {draft.jira_scope === "mine" && <label><input type="checkbox" checked={draft.jira_include_reporter} onChange={e => setDraft({ ...draft, jira_include_reporter: e.target.checked })} /> 내가 보고자인 티켓도 포함</label>}
-        <label><input type="checkbox" checked={draft.jira_include_parents} onChange={e => setDraft({ ...draft, jira_include_parents: e.target.checked })} /> 상위 티켓도 함께 가져오기</label>
+        {draft.jira_scope === "mine" && <label className="plugin-check-row"><input type="checkbox" checked={draft.jira_include_reporter} onChange={e => setDraft({ ...draft, jira_include_reporter: e.target.checked })} />내가 보고자인 티켓도 포함</label>}
+        <label className="plugin-check-row"><input type="checkbox" checked={draft.jira_include_parents} onChange={e => setDraft({ ...draft, jira_include_parents: e.target.checked })} />상위 티켓도 함께 가져오기</label>
         <p className="small muted">연결한 계정에 조회 권한이 있는 티켓만 읽습니다. 상위 티켓은 부모 관계를 따르며 일반 관련 링크와는 구분됩니다.</p>
       </>}
       {draft.provider === "confluence" && <>
@@ -179,21 +202,31 @@ export default function PluginsPanel() {
         <p className="small muted">Watch는 Confluence에서 지켜보기로 설정한 문서입니다. 최근 열람 목록은 포함하지 않습니다.</p>
         {draft.confluence_mode === "selected" && <>
           <label>문서 검색<input value={query} onChange={e => setQuery(e.target.value)} placeholder="제목 또는 본문 검색어" /></label>
-          <button type="button" className="btn btn-secondary" disabled={!native || busy || searchNeedsSave || !query.trim()} onClick={() => void searchPages()}>저장된 연결로 검색</button>
+          <div className="plugin-form-actions"><button type="button" className="btn btn-secondary" disabled={!native || busy || searchNeedsSave || !query.trim()} onClick={() => void searchPages()}>저장된 연결로 검색</button></div>
           <p className="small muted">먼저 사이트와 계정을 저장하고 인증 정보를 설정하세요. 사이트나 계정을 변경하면 저장 후 검색할 수 있습니다. 검색만으로 문서를 가져오지는 않습니다.</p>
-          {results.map(page => <label key={page.id}><input type="checkbox" checked={draft.confluence_page_ids.includes(page.id)} onChange={e => selectPage(page.id, e.target.checked)} /> {page.title} · {page.id}<span className="small muted">{page.url}</span></label>)}
+          {results.map(page => <label className="plugin-page-result" key={page.id}><input type="checkbox" checked={draft.confluence_page_ids.includes(page.id)} onChange={e => selectPage(page.id, e.target.checked)} /><span>{page.title} · {page.id}<span className="small muted">{page.url}</span></span></label>)}
           <label>페이지 ID 또는 같은 사이트의 페이지 URL<input value={pageInput} onChange={e => setPageInput(e.target.value)} placeholder="123456 또는 https://team.atlassian.net/wiki/spaces/TEAM/pages/123456" /></label>
-          <button type="button" className="btn btn-secondary" disabled={!native || busy || !pageInput.trim()} onClick={addPage}>선택 목록에 추가</button>
+          <div className="plugin-form-actions"><button type="button" className="btn btn-secondary" disabled={!native || busy || !pageInput.trim()} onClick={addPage}>선택 목록에 추가</button></div>
           <p className="small">선택한 문서 {draft.confluence_page_ids.length}개 · 저장 후 읽기 / 다시 확인을 실행하세요.</p>
-          {draft.confluence_page_ids.map(id => <div key={id} className="row-between"><span>{results.find(page => page.id === id)?.title ?? `페이지 ${id}`}</span><button type="button" className="btn btn-ghost" disabled={!native || busy} onClick={() => selectPage(id, false)}>선택 해제</button></div>)}
+          {draft.confluence_page_ids.map(id => <div key={id} className="plugin-page-selection"><span>{results.find(page => page.id === id)?.title ?? `페이지 ${id}`}</span><button type="button" className="btn btn-ghost" disabled={!native || busy} onClick={() => selectPage(id, false)}>선택 해제</button></div>)}
         </>}
       </>}
       {draft.provider === "github" && <label>인증 방식<select value={draft.auth} onChange={e => setDraft({ ...draft, auth: e.target.value as Connection["auth"] })}><option value="gh_cli">기존 gh 로그인 사용</option><option value="token">Personal access token</option></select></label>}
       <p className="small muted">{draft.provider === "obsidian" ? "앱 실행 중 선택한 경로를 10초 간격으로 확인하고 문서와 관계를 자동 갱신합니다. 원본 파일은 수정하지 않습니다." : draft.provider === "github" ? "gh 인증은 지정한 계정에서만 가져옵니다. 새 브라우저 인증은 터미널에서 gh auth login으로 진행하거나, 읽기 권한의 fine-grained PAT를 사용하세요." : "현재 개인용 연결은 이메일 + unscoped API token을 지원합니다. OAuth 2.0 (3LO), scoped token, 에이전트 OAuth 세션 공유는 아직 지원하지 않습니다."}</p>
-      <button className="btn btn-primary" disabled={!native || busy}>연결 범위 저장</button>{draft.id && <button type="button" className="btn btn-ghost" disabled={busy} onClick={() => editConnection(empty(draft.provider))}>수정 닫기</button>}
+      <div className="plugin-form-actions"><button className="btn btn-primary" disabled={!native || busy}>연결 범위 저장</button>{draft.id && <button type="button" className="btn btn-ghost" disabled={busy} onClick={() => editConnection(empty(draft.provider))}>수정 닫기</button>}</div>
     </form>
-    {tokenId && <form className="card plugin-form" onSubmit={saveToken}><h2>{connections.find(c => c.id === tokenId)?.label} 인증 정보</h2><label>API token<input type="password" autoComplete="new-password" required value={token} onChange={e => setToken(e.target.value)} /></label><p className="small muted">이 연결의 Keychain에 저장합니다. 토큰은 연결 설정 파일과 브라우저 저장소에 남기지 않습니다.</p><div className="card-actions"><button className="btn btn-primary" disabled={!native || busy}>인증 저장</button><button className="btn btn-ghost" type="button" disabled={!native || busy} onClick={() => { setToken(""); setTokenId(null); }}>취소</button></div></form>}
-    {removeId && <div className="card plugin-form"><h2>{connections.find(c => c.id === removeId)?.label} 연결 해제</h2><p>이 연결만 해제합니다. 기존 캐시와 사용자 메모는 유지합니다.</p><label><input type="checkbox" checked={deleteCredential} onChange={e => setDeleteCredential(e.target.checked)} /> 이 연결의 저장 토큰도 삭제 (gh 로그인은 유지)</label><div className="card-actions"><button className="btn btn-primary" disabled={!native || busy} onClick={() => void remove()}>해제</button><button className="btn btn-ghost" disabled={!native || busy} onClick={() => setRemoveId(null)}>취소</button></div></div>}
-    <p role="status">{message}</p>
+    {tokenId && <form className="card plugin-token-form plugin-form" aria-labelledby="plugin-token-title" onSubmit={saveToken}>
+      <h2 id="plugin-token-title">{connections.find(c => c.id === tokenId)?.label} 인증 정보</h2>
+      <label>API token<input type="password" autoComplete="new-password" required value={token} onChange={e => setToken(e.target.value)} /></label>
+      <p className="small muted">이 연결의 Keychain에 저장합니다. 토큰은 연결 설정 파일과 브라우저 저장소에 남기지 않습니다.</p>
+      <div className="plugin-form-actions"><button className="btn btn-primary" disabled={!native || busy}>인증 저장</button><button className="btn btn-ghost" type="button" disabled={!native || busy} onClick={() => { setToken(""); setTokenId(null); }}>취소</button></div>
+    </form>}
+    {removeId && <section className="card plugin-remove-confirmation" aria-labelledby="plugin-remove-title">
+      <h2 id="plugin-remove-title">{connections.find(c => c.id === removeId)?.label} 연결 해제</h2>
+      <p>이 연결만 해제합니다. 기존 캐시와 사용자 메모는 유지합니다.</p>
+      <label className="plugin-check-row"><input type="checkbox" checked={deleteCredential} onChange={e => setDeleteCredential(e.target.checked)} />이 연결의 저장 토큰도 삭제 (gh 로그인은 유지)</label>
+      <div className="plugin-form-actions"><button type="button" className="btn btn-primary" disabled={!native || busy} onClick={() => void remove()}>해제</button><button type="button" className="btn btn-ghost" disabled={!native || busy} onClick={() => setRemoveId(null)}>취소</button></div>
+    </section>}
+    {message && <p className="plugin-feedback" role="status" aria-live="polite" aria-atomic="true">{message}</p>}
   </div></section></div>;
 }

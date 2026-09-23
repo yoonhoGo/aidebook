@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke, isTauri } from "@tauri-apps/api/core";
+import { Button, Card } from "@radix-ui/themes";
+import { motion } from "motion/react";
+import { SegmentedControl } from "./ui/AppComponents";
 import "./DashboardPanel.css";
 
 type Kind = "work" | "task";
@@ -30,7 +33,7 @@ function explain(error: unknown): string {
   return e?.details?.message ?? e?.message ?? (typeof error === "string" ? error : "조회하지 못했습니다. Core 연결 상태를 확인하세요.");
 }
 
-export default function DashboardPanel({ onOpen }: { onOpen: (selection: { kind: Kind; id: string }) => void }) {
+export default function DashboardPanel({ onOpen, reducedMotion }: { onOpen: (selection: { kind: Kind; id: string }) => void; reducedMotion: boolean }) {
   const [timezone, setTimezone] = useState(() => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC");
   const [timezoneDraft, setTimezoneDraft] = useState(timezone);
   const [kind, setKind] = useState<Kind | "all">("all");
@@ -88,20 +91,28 @@ export default function DashboardPanel({ onOpen }: { onOpen: (selection: { kind:
     finally { savingRef.current = false; setSaving(false); }
   }
   return <div className="page dashboard-page"><section className="section"><div className="container">
-    <p className="eyebrow">개인 작업 공간</p><h1>오늘의 업무</h1>
+    <header className="dashboard-intro">
+      <p className="eyebrow">개인 작업 공간</p><h1>오늘의 업무</h1>
+      <p className="dashboard-lede muted">오늘의 다음 행동과 확인이 필요한 업무를 한곳에서 살핍니다.</p>
+    </header>
     {!native ? <p className="notice" role="status">대시보드는 데스크톱 앱의 업무와 할 일을 조회합니다. 브라우저에서는 저장소에 연결되지 않습니다.</p> : <>
       <form className="dashboard-controls" onSubmit={(event) => { event.preventDefault(); setPages({}); setTimezone(timezoneDraft); setOffsets(firstPages()); }}>
         <label>시간대<input value={timezoneDraft} onChange={(event) => setTimezoneDraft(event.target.value)} placeholder="Asia/Seoul" /></label>
-        <button className="btn btn-secondary" type="submit">시간대 적용</button>
-        <label>항목<select value={kind} onChange={(event) => { setPages({}); setKind(event.target.value as Kind | "all"); setOffsets(firstPages()); }}><option value="all">전체</option><option value="work">업무</option><option value="task">할 일</option></select></label>
-        <button className="btn btn-secondary" type="button" disabled={loading || saving} onClick={() => void refresh()}>새로고침</button>
+        <Button className="app-button" variant="surface" color="gray" type="submit">시간대 적용</Button>
+        <SegmentedControl label="대시보드 항목" id="dashboard-kind" options={[{ value: "all", label: "전체" }, { value: "work", label: "업무" }, { value: "task", label: "할 일" }]} value={kind} onChange={(next) => { setPages({}); setKind(next); setOffsets(firstPages()); }} reducedMotion={reducedMotion} />
+        <Button className="app-button" variant="surface" color="gray" type="button" disabled={loading || saving} onClick={() => void refresh()}>새로고침</Button>
       </form>
       <p className="muted small">{Object.values(pages)[0]?.date ?? "오늘"} · {timezone} · 캘린더 연결 전: 로컬 작업 시간과 개인 목표일을 표시합니다.</p>
       {loading && <p role="status">업무를 조회하는 중…</p>}
       {notice && <p role="status">{notice}</p>}
-      <div className="dashboard-grid">{sections.map(({ id, title, description }) => {
+      <div className="dashboard-summary" role="group" aria-label="오늘 업무 요약" aria-busy={loading}>
+        <article className="dashboard-stat"><span>오늘 항목</span><strong>{pages.today?.total ?? "—"}</strong><small>작업 시간 · 개인 목표</small></article>
+        <article className="dashboard-stat"><span>확인 필요</span><strong>{pages.attention?.total ?? "—"}</strong><small>막힘 · 보류 · 검토 · 목표일 지남</small></article>
+        <article className="dashboard-stat"><span>진행 중 업무</span><strong>{pages.in_progress?.total ?? "—"}</strong><small>현재 진행 중인 업무</small></article>
+      </div>
+      <div className="dashboard-grid">{sections.map(({ id, title, description }, index) => {
         const page = pages[id];
-        return <section key={id} className="dashboard-section" aria-labelledby={`dashboard-${id}`}>
+        return <Card asChild size="2" variant="surface" key={id}><motion.section className="dashboard-section" aria-labelledby={`dashboard-${id}`} initial={reducedMotion ? false : { opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={reducedMotion ? { duration: 0 } : { duration: 0.28, delay: index * 0.045 }}>
           <h2 id={`dashboard-${id}`}>{title}{page && <span className="small muted"> {page.total}개</span>}</h2><p className="small muted">{description}</p>
           {errors[id] && <p role="alert">{errors[id]}</p>}
           {page && page.entries.length === 0 && <p className="empty">{offsets[id] ? "이 페이지에 항목이 없습니다." : "표시할 항목이 없습니다."}</p>}
@@ -116,7 +127,7 @@ export default function DashboardPanel({ onOpen }: { onOpen: (selection: { kind:
             <div className="dashboard-actions"><button className="btn btn-ghost" onClick={() => onOpen({ kind: entry.item.kind, id: entry.item.id })}>열기 · 계획하기</button>{entry.item.kind === "task" && entry.item.fields.status !== "done" && <button className="btn btn-secondary" disabled={saving} onClick={() => void complete(entry.item)}>완료</button>}</div>
           </li>)}</ul>
           <nav aria-label={`${title} 페이지`} className="dashboard-pagination"><button className="btn btn-ghost" disabled={!offsets[id] || loading} onClick={() => setOffsets((old) => ({ ...old, [id]: Math.max(0, old[id] - 5) }))}>이전</button><span className="small">{offsets[id] / 5 + 1} 페이지</span><button className="btn btn-ghost" disabled={!page?.has_more || loading} onClick={() => setOffsets((old) => ({ ...old, [id]: old[id] + 5 }))}>다음</button></nav>
-        </section>;
+        </motion.section></Card>;
       })}</div>
     </>}
   </div></section></div>;

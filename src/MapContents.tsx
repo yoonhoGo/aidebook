@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import type { GraphModel } from "./graph-model";
 import { graphNodeKindLabel } from "./graph-model";
+import "./GraphViews.css";
 
 export default function MapContents({ model, selectedId, activeIds, onSelect }: {
   model: GraphModel; selectedId?: string; activeIds: string[]; onSelect: (id: string) => void;

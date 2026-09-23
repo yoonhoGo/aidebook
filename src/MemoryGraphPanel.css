@@ -1,22 +1,188 @@
-.memory-graph-panel { min-width: 0; }
-.memory-graph-panel h3 { margin-top: 24px; }
-.mg-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 22px 0; }
-.mg-card { margin: 14px 0; padding: 20px; overflow-wrap: anywhere; }
-.mg-body { white-space: pre-wrap; line-height: 1.7; }
-.mg-evidence { list-style: none; margin: 12px 0; padding: 0; font-size: 13px; }
-.mg-evidence li { margin: 8px 0; overflow-wrap: anywhere; }
-.mg-field { display: flex; flex-direction: column; gap: 7px; margin: 16px 0; font-size: 13px; min-width: 0; }
-.mg-field input, .mg-field select, .mg-field textarea { width: 100%; min-width: 0; min-height: 44px; border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; background: var(--surface); color: var(--fg); font: inherit; }
-.mg-field textarea { resize: vertical; line-height: 1.6; }
-.mg-options { display: grid; grid-template-columns: 1fr 2fr; gap: 16px; }
-.mg-controls { border: 0; margin: 0; padding: 0; min-width: 0; }
-.mg-status { padding: 12px; background: var(--accent-soft); line-height: 1.6; border-radius: 6px; }
-.mg-error { border-left: 3px solid var(--accent); }
-.mg-edge { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 14px 0; border-bottom: 1px solid var(--border-light); font-size: 13px; overflow-wrap: anywhere; }
-.mg-edge > span { min-width: 0; }
-.mg-history { margin: 24px 0; }
-.mg-history summary { cursor: pointer; padding: 12px 0; min-height: 44px; }
-.memory-graph-panel button:disabled, .mg-controls:disabled, .mg-field textarea:disabled { opacity: .5; cursor: not-allowed; }
-@media (max-width: 600px) { .mg-options { grid-template-columns: 1fr; gap: 0; } .mg-card { padding: 16px; } }
+.memory-graph-panel {
+  min-width: 0;
+  color: var(--fg);
+}
 
+.memory-graph-panel h3 {
+  margin: 26px 0 10px;
+  color: var(--fg);
+  font: 600 16px/1.4 var(--font-body);
+  letter-spacing: -.015em;
+}
+
+.memory-graph-panel > .muted:first-child { max-width: 70ch; line-height: 1.7; }
+
+.memory-graph-panel .btn {
+  min-height: 40px;
+  border-radius: 6px;
+  font-size: 12px;
+  transition: background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease, color 160ms ease, transform 160ms ease;
+}
+
+.memory-graph-panel .btn:active { transform: translateY(1px); }
+
+.mg-tabs {
+  display: flex;
+  gap: 17px;
+  overflow-x: auto;
+  padding: 0;
+  margin: 20px 0 22px;
+  border-bottom: 1px solid var(--border);
+  scrollbar-width: thin;
+}
+
+.memory-graph-panel .mg-tabs .btn {
+  min-height: 42px;
+  flex: 0 0 auto;
+  padding: 8px 1px 9px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  box-shadow: none;
+  white-space: nowrap;
+}
+
+.memory-graph-panel .mg-tabs .btn:hover { background: var(--fg-soft); color: var(--fg); }
+.memory-graph-panel .mg-tabs .btn-primary { border-bottom-color: var(--accent); background: transparent; color: var(--accent); font-weight: 600; }
+.memory-graph-panel .mg-tabs .btn-primary:hover { border-bottom-color: var(--accent); background: transparent; color: var(--accent); box-shadow: none; }
+.memory-graph-panel .mg-tabs .btn:focus-visible { border-radius: 4px 4px 0 0; outline-offset: 1px; }
+
+.mg-card {
+  padding: 18px 19px;
+  margin: 13px 0;
+  overflow-wrap: anywhere;
+  border-radius: 8px;
+  box-shadow: 0 2px 9px color-mix(in oklch, var(--fg) 4%, transparent);
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.mg-card:hover { border-color: color-mix(in oklch, var(--accent) 24%, var(--border)); }
+.mg-body { margin: 11px 0; color: var(--fg); font-size: 14px; line-height: 1.75; white-space: pre-wrap; }
+.mg-card > p:not(.mg-body) { line-height: 1.65; }
+.mg-card .tag-row { margin: 0; }
+
+.mg-evidence {
+  display: grid;
+  gap: 6px;
+  padding: 0;
+  margin: 12px 0;
+  list-style: none;
+  font-size: 12px;
+}
+
+.mg-evidence li { display: flex; min-width: 0; align-items: center; flex-wrap: wrap; gap: 7px; overflow-wrap: anywhere; }
+.mg-evidence .tag { min-height: 24px; padding: 3px 7px; border-radius: 4px; font-size: 10px; }
 .memory-graph-panel a { color: var(--accent); text-underline-offset: 3px; }
+.memory-graph-panel a:hover { text-decoration-thickness: 2px; }
+
+.mg-field {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 7px;
+  margin: 16px 0;
+  color: var(--fg);
+  font-size: 12px;
+  font-weight: 550;
+}
+
+.mg-field input,
+.mg-field select,
+.mg-field textarea {
+  width: 100%;
+  min-width: 0;
+  min-height: 42px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-strong, var(--surface));
+  color: var(--fg);
+  font: 13px/1.5 var(--font-body);
+  font-weight: 400;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.mg-field input:focus-visible,
+.mg-field select:focus-visible,
+.mg-field textarea:focus-visible {
+  border-color: var(--accent);
+  outline: 0;
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--accent) 13%, transparent);
+}
+
+.mg-field textarea { min-height: 120px; resize: vertical; line-height: 1.65; }
+.mg-field input[type="file"] { padding: 5px; color: var(--muted); font-size: 12px; }
+.mg-field input[type="file"]::file-selector-button { min-height: 30px; padding: 4px 9px; margin-right: 9px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); color: var(--fg); font: 12px var(--font-body); cursor: pointer; }
+.mg-field input[type="file"]::file-selector-button:hover { border-color: var(--accent); background: var(--accent-soft); }
+
+.mg-options { display: grid; grid-template-columns: minmax(0, .78fr) minmax(0, 1.22fr); gap: 14px; }
+.mg-controls { min-width: 0; padding: 0; margin: 0; border: 0; }
+.mg-controls legend { margin-bottom: 5px; }
+.mg-controls:disabled { opacity: .56; }
+
+.memory-graph-panel .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 17px; }
+.memory-graph-panel .row-between { align-items: center; gap: 12px; }
+.memory-graph-panel .row-between h3 { margin: 25px 0 8px; }
+
+.mg-status {
+  padding: 10px 12px;
+  margin: 12px 0 16px;
+  border: 1px solid color-mix(in oklch, var(--accent) 19%, var(--border));
+  border-radius: 5px;
+  background: var(--accent-soft);
+  color: var(--fg);
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.memory-graph-panel .notice { margin: 12px 0 18px; border-radius: 5px; font-size: 12px; line-height: 1.65; }
+.mg-error { border-left: 3px solid var(--accent) !important; }
+
+.mg-results { margin-top: 22px; }
+.mg-results > h3 { margin-top: 28px; padding-bottom: 9px; border-bottom: 1px solid var(--border); }
+.mg-results .mg-card { margin-top: 10px; }
+
+.mg-edge {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border-light);
+  font-size: 12px;
+}
+
+.mg-edge > span { min-width: 0; overflow-wrap: anywhere; }
+.mg-edge > span:nth-child(2) { color: var(--muted); }
+.mg-edge .tag { justify-self: end; white-space: nowrap; }
+
+.mg-history { padding-top: 8px; margin: 22px 0; border-top: 1px solid var(--border); }
+.mg-history summary { min-height: 44px; padding: 11px 2px; color: var(--fg); cursor: pointer; font-size: 12px; font-weight: 600; }
+.mg-history summary:hover { color: var(--accent); }
+.mg-history summary:focus-visible { border-radius: 4px; outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.memory-graph-panel button:disabled,
+.mg-field :disabled { cursor: not-allowed; opacity: .5; }
+
+.reduce-motion .memory-graph-panel *,
+.reduce-motion .memory-graph-panel *::before,
+.reduce-motion .memory-graph-panel *::after { transition: none !important; }
+
+@media (prefers-reduced-motion: reduce) {
+  .memory-graph-panel *,
+  .memory-graph-panel *::before,
+  .memory-graph-panel *::after { transition: none !important; }
+  .memory-graph-panel .btn:active { transform: none; }
+}
+
+@media (max-width: 600px) {
+  .memory-graph-panel .mg-tabs { gap: 14px; margin: 16px 0 20px; }
+  .mg-card { padding: 15px; }
+  .mg-options { grid-template-columns: 1fr; gap: 0; }
+  .mg-edge { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 7px; font-size: 11px; }
+  .mg-edge .tag { grid-column: 1 / -1; justify-self: start; }
+  .memory-graph-panel .row-between { align-items: flex-start; }
+}

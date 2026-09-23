@@ -12,7 +12,7 @@ function createNodeLabel(text: string, active: boolean, selected: boolean) {
   const canvas = document.createElement("canvas");
   const context = canvas.getContext("2d");
   if (!context) return null;
-  const font = "600 25px -apple-system, BlinkMacSystemFont, system-ui, sans-serif";
+  const font = '600 25px "Pretendard", sans-serif';
   context.font = font;
   const label = text.length > 22 ? `${text.slice(0, 21)}…` : text;
   const textWidth = Math.ceil(context.measureText(label).width);
@@ -23,7 +23,7 @@ function createNodeLabel(text: string, active: boolean, selected: boolean) {
   context.scale(2, 2);
   context.font = font;
   context.textBaseline = "middle";
-  context.fillStyle = selected ? "#19364c" : active ? "#00786f" : "#41586b";
+  context.fillStyle = selected ? "#19364c" : active ? "#315f9e" : "#41586b";
   context.fillText(label, 17, height / 2);
   const texture = new THREE.CanvasTexture(canvas);
   texture.minFilter = THREE.LinearFilter;
@@ -37,8 +37,8 @@ function createNodeLabel(text: string, active: boolean, selected: boolean) {
 
 function createGraphNodeObject(node: GraphNode, active: boolean, selected: boolean, showLabel: boolean, dimmed: boolean) {
   const group = new THREE.Group();
-  const color = node.kind === "source" ? "#4379a6" : node.kind === "memory" ? (node.candidate ? "#b38038" : "#8074af") : "#65798c";
-  const activeColor = active ? "#008e83" : selected ? "#253f56" : color;
+  const color = node.kind === "source" ? "#426f9b" : node.kind === "memory" ? (node.candidate ? "#9a7335" : "#667da5") : "#667b8e";
+  const activeColor = active ? "#346bb3" : selected ? "#203e65" : color;
   const geometry = node.kind === "source"
     ? new THREE.BoxGeometry(10, 12, 6)
     : node.kind === "memory"
@@ -50,7 +50,7 @@ function createGraphNodeObject(node: GraphNode, active: boolean, selected: boole
   if (active || selected) {
     const ring = new THREE.Mesh(
       new THREE.TorusGeometry(node.kind === "request" ? 17 : 14, 1.25, 8, 32),
-      new THREE.MeshBasicMaterial({ color: selected ? "#253f56" : "#008e83", transparent: true, opacity: .65 }),
+      new THREE.MeshBasicMaterial({ color: selected ? "#203e65" : "#346bb3", transparent: true, opacity: .65 }),
     );
     ring.rotation.x = Math.PI / 2;
     ring.name = active ? "activation-ring" : "selection-ring";
@@ -115,10 +115,10 @@ export default function GraphCanvas({ model, kindFilter, activeOnly, activation,
     if (!graph) return;
     graph.cameraPosition({ x: 420, y: 460, z: 640 }, { x: 0, y: 0, z: 0 }, 0);
     const extent = Math.max(800, ...model.nodes.flatMap((node) => [Math.abs(node.x) * 2 + 200, Math.abs(node.z) * 2 + 200]));
-    const grid = new THREE.GridHelper(extent, Math.ceil(extent / 50), "#a5b8c8", "#cfdae3");
+    const grid = new THREE.GridHelper(extent, Math.ceil(extent / 50), "#b4c3d2", "#dce4ec");
     grid.position.y = -24;
     grid.material.transparent = true;
-    grid.material.opacity = .42;
+    grid.material.opacity = .35;
     graph.scene().add(grid);
     return () => { graph.scene().remove(grid); grid.geometry.dispose(); grid.material.dispose(); };
   }, [model]);
@@ -199,16 +199,16 @@ export default function GraphCanvas({ model, kindFilter, activeOnly, activation,
   const adjacent = (link: GraphLink) => link.sourceId === focusId || link.targetId === focusId;
   return <div ref={containerRef} className={`graph-canvas ${graphMotionReduced ? "reduce-motion" : ""}`} aria-label="3차원 정보 지도">
     <ForceGraph3D ref={graphRef} graphData={graphData} nodeId="id" linkSource="source" linkTarget="target"
-      controlType="orbit" backgroundColor="#eef3f7" showNavInfo={false} width={size.width} height={size.height}
+      controlType="orbit" backgroundColor="#f2f5f8" showNavInfo={false} width={size.width} height={size.height}
       nodeLabel={(node) => graphTooltip(`${graphNodeKindLabel(node.kind)} · ${node.title}`)}
       nodeThreeObject={(node) => nodeObjects.get(String(node.id))!} nodeThreeObjectExtend={false}
       linkLabel={(link) => graphTooltip(`${graphLinkKindLabel(link.kind)} · ${link.label}`)}
-      linkColor={(link) => activeEdgeSet.has(link.id) ? "#008e83" : adjacent(link) ? "#536f87" : neighborhood.size ? "#d3dde5" : "#95a9b9"}
+      linkColor={(link) => activeEdgeSet.has(link.id) ? "#346bb3" : adjacent(link) ? "#536f87" : neighborhood.size ? "#d3dde5" : "#95a9b9"}
       linkWidth={(link) => activeEdgeSet.has(link.id) ? 1.8 : adjacent(link) ? 1 : .45}
       linkDirectionalArrowLength={(link) => link.kind === "evidence" ? 0 : 3}
-      linkDirectionalArrowColor={(link) => activeEdgeSet.has(link.id) ? "#008e83" : "#71829a"}
+      linkDirectionalArrowColor={(link) => activeEdgeSet.has(link.id) ? "#346bb3" : "#71829a"}
       linkDirectionalParticles={(link) => animateActivation && activeEdgeSet.has(link.id) ? 3 : 0}
-      linkDirectionalParticleSpeed={0.006} linkDirectionalParticleWidth={1.5} linkDirectionalParticleColor="#008e83"
+      linkDirectionalParticleSpeed={0.006} linkDirectionalParticleWidth={1.5} linkDirectionalParticleColor="#346bb3"
       linkOpacity={0.65} cooldownTicks={0} warmupTicks={0} enableNodeDrag enableNavigationControls
       onNodeHover={(node) => setHoveredId(node ? String(node.id) : undefined)}
       onNodeClick={(node) => onNodeSelect(String(node.id))} onLinkClick={(link) => onLinkSelect(link.id)} onBackgroundClick={onClear} />
