@@ -97,8 +97,14 @@ impl LocalSync {
         let mut ready = self.operation.lock().map_err(|_| unavailable())?;
         let mut registry = self.registry.lock().map_err(|_| unavailable())?;
         let connection = registry.get(id)?;
-        if delete_credential && connection.auth == plugins::AuthMethod::Token {
-            KeychainCredentialStore.delete(&plugins::credential_key(id))?;
+        if delete_credential {
+            match connection.auth {
+                plugins::AuthMethod::Token => {
+                    KeychainCredentialStore.delete(&plugins::credential_key(id))?
+                }
+                plugins::AuthMethod::Oauth => super::oauth::delete_credentials(id)?,
+                _ => (),
+            }
         }
         registry.remove(id)?;
         ready.remove(id);

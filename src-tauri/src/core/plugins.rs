@@ -27,6 +27,7 @@ pub enum AuthMethod {
     Local,
     GhCli,
     Token,
+    Oauth,
 }
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -65,6 +66,8 @@ pub struct PluginConnection {
     #[serde(default)]
     pub confluence_page_ids: Vec<String>,
     pub auth: AuthMethod,
+    #[serde(default)]
+    pub oauth_client_id: String,
     #[serde(default = "default_auto_sync")]
     pub auto_sync: bool,
 }
@@ -82,6 +85,7 @@ pub struct ConnectionPatch {
     pub confluence_mode: Option<ConfluenceMode>,
     pub confluence_page_ids: Option<Vec<String>>,
     pub auth: Option<AuthMethod>,
+    pub oauth_client_id: Option<String>,
     pub auto_sync: Option<bool>,
 }
 fn default_auto_sync() -> bool {
@@ -126,12 +130,12 @@ impl PluginConnection {
                 }
             }
             Provider::Github => {
-                if !matches!(self.auth, AuthMethod::GhCli | AuthMethod::Token)
-                    || !segment(&self.account)
+                if !matches!(
+                    self.auth,
+                    AuthMethod::GhCli | AuthMethod::Token | AuthMethod::Oauth
+                ) || !segment(&self.account)
                 {
-                    return Err(invalid(
-                        "select a GitHub account and gh CLI or token authentication",
-                    ));
+                    return Err(invalid("select a GitHub account and authentication method"));
                 }
                 let (owner, repo) = self
                     .scope
@@ -152,13 +156,17 @@ impl PluginConnection {
                         "Atlassian Cloud site must be https://your-site.atlassian.net",
                     ));
                 }
-                if self.auth != AuthMethod::Token
-                    || !self.account.contains('@')
+                if !matches!(self.auth, AuthMethod::Token | AuthMethod::Oauth)
+                    || (self.auth == AuthMethod::Token && !self.account.contains('@'))
+                    || self.account.is_empty()
                     || self.account.contains([':', '\r', '\n'])
                 {
                     return Err(invalid(
-                        "Atlassian requires an account email and personal API token",
+                        "Atlassian requires an account and API token or OAuth",
                     ));
+                }
+                if self.provider == Provider::Confluence && self.auth != AuthMethod::Token {
+                    return Err(invalid("Confluence currently requires an API token"));
                 }
                 if self.provider == Provider::Jira
                     && self.jira_scope == JiraScope::Project
@@ -184,6 +192,11 @@ impl PluginConnection {
                     self.confluence_page_ids = pages;
                 }
             }
+        }
+        if self.auth == AuthMethod::Oauth
+            && (!segment(&self.oauth_client_id) || self.oauth_client_id.len() > 200)
+        {
+            return Err(invalid("enter a valid OAuth app client ID"));
         }
         Ok(())
     }
@@ -263,6 +276,9 @@ impl PluginRegistry {
         if let Some(value) = patch.auth {
             connection.auth = value;
         }
+        if let Some(value) = patch.oauth_client_id {
+            connection.oauth_client_id = value;
+        }
         if let Some(value) = patch.auto_sync {
             connection.auto_sync = value;
         }
@@ -319,6 +335,9 @@ pub fn set_token(connection: &PluginConnection, token: &str) -> CoreResult<()> {
     KeychainCredentialStore.set(&credential_key(&connection.id), token)
 }
 pub(super) fn token(connection: &PluginConnection) -> CoreResult<String> {
+    if connection.auth == AuthMethod::Oauth {
+        return super::oauth::access_token(connection);
+    }
     if connection.auth == AuthMethod::GhCli {
         // Never switch the globally active account; inherited tokens must not override --user.
         let output = Command::new("gh")
@@ -638,8 +657,23 @@ fn jira_request(c: &PluginConnection, token: &str, body: &Value) -> CoreResult<V
     if token.chars().any(char::is_control) {
         return Err(invalid("invalid token"));
     }
-    let config = format!("url = {}\nuser = {}\nheader = \"Content-Type: application/json\"\ndata = {}\nwrite-out = \"\\nAIDEBOOK_STATUS:%{{http_code}}\"\n",
-        quote(&format!("{}/rest/api/3/search/jql", c.scope)), quote(&format!("{}:{token}", c.account)), quote(&body.to_string()));
+    let (url, auth) = if c.auth == AuthMethod::Oauth {
+        let cloud_id = super::oauth::cloud_id(c)?;
+        (
+            format!("https://api.atlassian.com/ex/jira/{cloud_id}/rest/api/3/search/jql"),
+            format!(
+                "header = {}\n",
+                quote(&format!("Authorization: Bearer {token}"))
+            ),
+        )
+    } else {
+        (
+            format!("{}/rest/api/3/search/jql", c.scope),
+            format!("user = {}\n", quote(&format!("{}:{token}", c.account))),
+        )
+    };
+    let config = format!("url = {}\n{}header = \"Content-Type: application/json\"\ndata = {}\nwrite-out = \"\\nAIDEBOOK_STATUS:%{{http_code}}\"\n",
+        quote(&url), auth, quote(&body.to_string()));
     let mut child = Command::new("curl")
         .args([
             "-q",
@@ -717,6 +751,7 @@ mod tests {
             } else {
                 AuthMethod::Token
             },
+            oauth_client_id: String::new(),
         }
     }
     #[test]
@@ -732,6 +767,30 @@ mod tests {
         assert!(!jira_jql(&c).contains("reporter"));
         c.jira_include_reporter = true;
         assert!(jira_jql(&c).contains("reporter = currentUser()"));
+    }
+    #[test]
+    fn oauth_requires_client_id_only_for_supported_providers() {
+        let mut github = connection("github", Provider::Github, "team/repo");
+        github.account = "login".into();
+        github.auth = AuthMethod::Oauth;
+        assert!(github.validate().is_err());
+        github.oauth_client_id = "Iv1.example".into();
+        github.validate().unwrap();
+
+        let mut jira = connection("jira", Provider::Jira, "https://team.atlassian.net");
+        jira.account = "account label".into();
+        jira.auth = AuthMethod::Oauth;
+        jira.oauth_client_id = "client-id".into();
+        jira.validate().unwrap();
+
+        let mut confluence = connection(
+            "confluence",
+            Provider::Confluence,
+            "https://team.atlassian.net",
+        );
+        confluence.auth = AuthMethod::Oauth;
+        confluence.oauth_client_id = "client-id".into();
+        assert!(confluence.validate().is_err());
     }
     #[test]
     fn mine_fetches_cross_project_ancestors_once_and_stops_cycles() {

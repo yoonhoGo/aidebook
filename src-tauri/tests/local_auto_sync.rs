@@ -47,6 +47,7 @@ impl Fixture {
                 confluence_mode: Default::default(),
                 confluence_page_ids: vec![],
                 auth: AuthMethod::Local,
+                oauth_client_id: String::new(),
                 auto_sync: true,
             })
             .unwrap();

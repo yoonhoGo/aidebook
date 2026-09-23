@@ -27,6 +27,7 @@ struct AppState {
     vault: Mutex<Option<ObsidianAdapter>>,
     vault_watcher: Mutex<Option<VaultWatcher>>,
     github: Mutex<Option<GitHubAdapter<HttpGitHubApi, KeychainCredentialStore>>>,
+    oauth: core::oauth::OAuthManager,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -200,6 +201,44 @@ fn plugin_token_set(
         .map_err(|_| plugin_lock_error())?
         .get(&id)?;
     core::plugins::set_token(&connection, &token)
+}
+#[tauri::command]
+fn plugin_oauth_secret_set(
+    id: String,
+    secret: String,
+    state: State<'_, AppState>,
+) -> Result<(), CoreError> {
+    let connection = state
+        .plugins
+        .lock()
+        .map_err(|_| plugin_lock_error())?
+        .get(&id)?;
+    core::oauth::set_client_secret(&connection, &secret)
+}
+#[tauri::command]
+async fn plugin_oauth_start(
+    id: String,
+    state: State<'_, AppState>,
+) -> Result<core::oauth::OAuthStart, CoreError> {
+    let connection = state
+        .plugins
+        .lock()
+        .map_err(|_| plugin_lock_error())?
+        .get(&id)?;
+    let manager = state.oauth.clone();
+    tauri::async_runtime::spawn_blocking(move || manager.start(connection))
+        .await
+        .map_err(|_| plugin_lock_error())?
+}
+#[tauri::command]
+async fn plugin_oauth_status(
+    id: String,
+    state: State<'_, AppState>,
+) -> Result<core::oauth::OAuthStatus, CoreError> {
+    let manager = state.oauth.clone();
+    tauri::async_runtime::spawn_blocking(move || manager.status(&id))
+        .await
+        .map_err(|_| plugin_lock_error())?
 }
 #[tauri::command]
 async fn plugin_confluence_search(
@@ -735,6 +774,7 @@ pub fn run() {
                 vault: Mutex::new(None),
                 vault_watcher: Mutex::new(None),
                 github: Mutex::new(None),
+                oauth: core::oauth::OAuthManager::default(),
             });
             Ok(())
         })
@@ -750,6 +790,9 @@ pub fn run() {
             plugin_update,
             plugin_remove,
             plugin_token_set,
+            plugin_oauth_secret_set,
+            plugin_oauth_start,
+            plugin_oauth_status,
             plugin_refresh,
             plugin_confluence_search,
             core_status,

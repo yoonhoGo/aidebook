@@ -89,6 +89,17 @@
   저장/삭제는 미검증이다. 내장 OAuth flow·Jira scoped token은 미구현이다.
 - 자세한 인증 재사용 판단과 공식 자료: [PLUGIN_CONNECTIONS.md](./PLUGIN_CONNECTIONS.md).
 
+## Jira/GitHub 인증 확장 — 2026-09-23
+
+- 별도 jj 워크스페이스에서 GitHub App device flow, Jira 3LO loopback callback,
+  state 확인, Jira cloudId/site 대조, 만료 토큰 갱신을 구현했다.
+- 기존 gh CLI, GitHub PAT, Jira 이메일 + API token 연결은 유지한다.
+  OAuth access/refresh token과 Jira client secret은 연결별 macOS Keychain에 저장한다.
+- Frontend build/Vitest, Rust 테스트와 정적 빌드 검사를 통과했다. 실제 GitHub/Jira
+  OAuth 앱 등록, native 브라우저 callback, Keychain 권한 및 실자료 갱신은 미검증이다.
+- 이전 절의 OAuth 미구현 설명은 당시 상태다. 현재 설정과 배포 제약은
+  [PLUGIN_CONNECTIONS.md](./PLUGIN_CONNECTIONS.md)를 따른다.
+
 ## M0 — 완료
 
 - Rust `Core` 공통 모델/API와 구조화 `CoreError` 추가
