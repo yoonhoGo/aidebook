@@ -1,6 +1,6 @@
 # 플러그인 연결과 인증
 
-검토일: 2026-09-21. 우선 대상은 **Obsidian → GitHub → Jira → Confluence**다.
+검토일: 2026-09-23. 우선 대상은 **Obsidian → GitHub → Jira → Confluence**다.
 외부 시스템에는 쓰지 않으며, 로컬 경로 연결은 네트워크 로그인에 의존하지 않는다.
 
 ## 구현
@@ -78,14 +78,31 @@
 | --- | --- | --- |
 | Obsidian | 없음 | 로컬 경로 최우선 |
 | GitHub | 기존 gh 로그인 → `gh auth login` 브라우저 인증 → fine-grained PAT | gh 재사용과 PAT 지원. 저장소와 Issues/Pull requests 읽기 권한을 최소화 |
-| GitHub 자체 OAuth | Device flow | 별도 OAuth/GitHub App 등록과 client ID가 필요. 이번에 내장 로그인 flow는 구현하지 않음 |
+| GitHub 자체 OAuth | Device flow | Device flow를 켠 GitHub App client ID를 연결에 저장하고 브라우저에서 승인. 실제 접근 범위는 GitHub App에 부여한 저장소 권한에 따름 |
 | Jira 개인 연결 | API token + 계정 이메일 | 현재 unscoped 개인 API token과 `https://<site>.atlassian.net` 지원 |
-| Jira OAuth | OAuth 2.0 authorization code grant (3LO) | 배포용 우선 방향. 앱 등록, callback, state 검증, 토큰 교환·갱신, accessible-resources/cloudId 선택이 필요. 아직 미구현 |
+| Jira OAuth | OAuth 2.0 authorization code grant (3LO) | 3LO 앱의 client ID와 Keychain client secret을 사용. loopback callback, state 검증, 토큰 교환·갱신, accessible-resources/cloudId 대조를 구현 |
 | Jira scoped API token | API gateway + cloudId | `https://api.atlassian.com/ex/jira/{cloudId}` 경로 필요. 현재 연결 폼에는 미지원으로 명시 |
 
-Atlassian은 배포용 cloud integration에 3LO를 권장한다. API token 수집 방식에는
-별도 배포 정책 제약이 있으므로 이번 개인용 직접 연결을 marketplace 배포용
-인증 설계로 확정하지 않는다. 토큰 만료·권한 부족은 재인증 오류로 표시한다.
+GitHub OAuth 연결은 GitHub App에서 device flow를 활성화하고 필요한 저장소에
+읽기 권한을 부여한 후 client ID를 입력한다. 브라우저의 사용자 코드를 승인하면
+앱이 최소 polling 간격을 지켜 결과를 확인한다. `/user` 로그인 이름이 연결의
+GitHub 계정과 다르면 토큰을 저장하지 않는다. 만료형 토큰의 refresh token도
+연결별 Keychain에 보관하고 갱신한다.
+
+Jira OAuth 연결은 Atlassian Developer Console에서 3LO 앱을 준비하고
+`read:jira-work`, `offline_access`를 활성화한다. Callback URL은
+`http://127.0.0.1:48913/aidebook/oauth`로 정확히 등록한다. 연결에는 client ID만
+저장하고 client secret과 access/refresh token은 각각 연결별 Keychain 항목에 저장한다.
+앱은 loopback listener로 콜백을 받고 state를 검증하며, 승인된 사이트 목록에서
+설정된 `https://<site>.atlassian.net`과 일치하는 cloudId만 사용한다.
+OAuth 연결도 명시적으로 선택한 Jira 티켓 범위만 읽는다. 3LO는 앱 등록이
+필요하며 개인용 로컬 설정을 대상으로 구현했다. 공유 배포를 위해서는 앱 소유자가
+client secret을 안전하게 운영하는 별도 인증 구성이 필요하다.
+
+API 키 방식은 기존 GitHub fine-grained PAT, Jira 계정 이메일 + unscoped API
+token을 유지한다. Atlassian의 배포 정책상 고객의 API token을 수집하거나
+각 고객에게 3LO 앱 생성을 요구하는 cloud 앱에는 제약이 있으므로 이 개인용
+설정을 marketplace 배포용 인증으로 취급하지 않는다.
 
 ## 호환성과 남은 경계
 
@@ -94,7 +111,8 @@ Atlassian은 배포용 cloud integration에 3LO를 권장한다. API token 수�
   GitHub 로그인 계정은 새로 지정해야 한다. 기존 Tauri 단일 연결 명령은 호환용으로
   남겼고 새 연결 화면은 `plugin_*` 명령을 사용한다.
 - Obsidian 다중 연결은 아래 자동 갱신을 지원한다. GitHub·Jira는 수동 읽기다.
-  CLI/MCP 연결 관리는 아래 명령으로 지원한다. 자체 OAuth 로그인/refresh flow는 아직 미구현이다.
+  CLI/MCP 연결 관리는 아래 명령으로 지원한다. OAuth 브라우저 승인과 client
+  secret 등록은 데스크톱 앱에서 진행한다.
 - DB 백업은 `connections.json`과 Keychain을 포함하지 않는다.
 - 브라우저 미리보기는 실제 연결 저장·토큰 저장을 차단한다.
 
@@ -113,6 +131,15 @@ Atlassian은 배포용 cloud integration에 3LO를 권장한다. API token 수�
   비활성화를 확인했다. 이것은 native Tauri IPC나 실계정 자료 읽기 검증이 아니다.
 - 미검증: native 앱에서 실제 볼트·Jira·GitHub 자료 갱신, Keychain 저장/삭제
   프롬프트와 접근 권한, iCloud 상태. gh 인증 상태 확인은 자료 수집 성공의 증거가 아니다.
+
+## 에이전트에 이미 연결된 MCP
+
+현재 Aidebook MCP는 Aidebook Core의 자료를 Codex·Claude Code에 **제공**하는
+서버다. 에이전트에 등록된 다른 GitHub/Jira MCP 서버의 세션과 인증 정보를
+Aidebook이 역방향으로 읽는 클라이언트는 구현되어 있지 않다. 해당 MCP 서버가
+독립적인 접속 방식과 읽기 도구를 제공한다면, 서버 주소·권한·도구 계약을
+명시적으로 확인한 다음 별도의 Aidebook MCP 클라이언트 연결로 가져올 수 있다.
+에이전트 설정 파일의 토큰이나 브라우저 세션을 자동 복사하지 않는다.
 
 ## 공식 자료
 
@@ -212,7 +239,8 @@ JSON 인수는 stdin으로 전달한다. `describe`로 현재 도구 목록을 �
 - Watch는 구독 상태이며 최근 열람 기록은 포함하지 않는다. 첨부파일/매크로 실행은 미지원이다.
 - Jira·Confluence 모두 수동 갱신이다. 범위 축소나 선택 해제는 다음 수집 범위를 바꾸며,
   이미 색인한 원문 캐시와 메모를 삭제하지 않는다.
-- 인증은 기존 사이트 직접 접근용 unscoped token 방식이다. OAuth/cloudId/scoped token은 미지원이다.
+- Confluence 인증은 기존 사이트 직접 접근용 unscoped token 방식이다.
+  Jira OAuth/cloudId 지원은 위 신규 인증 선택 절을 따른다. scoped API token은 미지원이다.
 
 CLI 예시:
 

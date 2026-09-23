@@ -13,6 +13,7 @@ pub mod github;
 pub mod ipc;
 pub mod local_sync;
 pub mod mcp;
+pub mod oauth;
 pub mod obsidian;
 pub mod plugins;
 pub mod types;

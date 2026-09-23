@@ -49,7 +49,8 @@ fn connection_properties() -> Value {
         "jira_include_parents":{"type":"boolean"},
         "confluence_mode":{"type":"string","enum":["authored","watched","selected"]},
         "confluence_page_ids":{"type":"array","items":{"type":"string"}},
-        "auth":{"type":"string","enum":["local","gh_cli","token"]},
+        "auth":{"type":"string","enum":["local","gh_cli","token","oauth"]},
+        "oauth_client_id":{"type":"string","description":"Client ID for a GitHub device-flow app or Jira 3LO app; credentials are configured in the desktop app."},
         "auto_sync":{"type":"boolean","default":true,"description":"Automatic refresh applies to local Obsidian vaults only."}
     })
 }
