@@ -1,7 +1,33 @@
 # 플러그인 연결과 인증
 
-검토일: 2026-09-23. 우선 대상은 **Obsidian → GitHub → Jira → Confluence**다.
+검토일: 2026-09-23. 우선 대상은 **Obsidian → GitHub → Atlassian(Jira·Confluence)**다.
 외부 시스템에는 쓰지 않으며, 로컬 경로 연결은 네트워크 로그인에 의존하지 않는다.
+
+## 통합 Atlassian 연결 — 2026-09-23
+
+- 새 연결은 사이트·계정 하나와 `jira_enabled`/`confluence_enabled` 선택을 저장한다.
+  티켓·문서의 읽기 범위는 각각 유지한다. 같은 사이트의 기존 `jira`/`confluence`
+  연결은 자동 병합하거나 삭제하지 않고 계속 읽고 수정할 수 있다.
+- 연결 설정 폼에서 API token을 입력하면 선택한 제품의 읽기 API 접근을 확인한 뒤
+  연결별 Keychain에 저장한다. OAuth를 고르면 Client ID와 secret을 설정 폼에서
+  입력하고 저장 후 브라우저 승인을 시작한다. OAuth token과 secret은 Keychain에
+  두고 연결 파일에는 저장하지 않는다. 인증 후 제품별 접근 확인 결과를 표시한다.
+- Atlassian 3LO 앱에는 선택한 제품에 따라 `read:jira-work`,
+  `search:confluence`, `read:confluence-content.all` 및 `offline_access`가 필요하다.
+  승인된 같은 사이트의 cloudId와 각 scope를 대조한다. OAuth API 요청은
+  `api.atlassian.com/ex/jira|confluence/{cloudId}`로 보낸다.
+- 문서 검색은 후보만 반환한다. 인증·검색·범위 저장만으로 원문을 가져오지 않으며
+  `읽기 / 다시 확인`에서 선택된 제품을 읽는다. 한 제품의 읽기가 실패해도 다른
+  제품의 읽기는 시도하고 실패를 표시한다.
+- MCP/CLI에서는 `provider: "atlassian"`과 제품 선택 필드를 설정할 수 있다.
+  CLI 예: `aidebook-cli plugins add --id work --provider atlassian --label Work
+  --account me@example.com --scope https://team.atlassian.net --jira-scope mine
+  --jira-enabled true --confluence-enabled true`. 인증 정보는 데스크톱 앱에서 설정한다.
+- 이 앱의 현재 3LO 방식은 개인 로컬 설정이다. 공유 배포 시 고객별 Client secret
+  입력 방식은 별도 배포용 인증 설계로 교체해야 한다.
+
+근거: [Atlassian 3LO의 복수 제품 scope와 API gateway](https://developer.atlassian.com/cloud/jira/platform/oauth-2-3lo-apps/),
+[Confluence CQL 검색 scope](https://developer.atlassian.com/cloud/confluence/rest/v1/api-group-search/).
 
 ## 구현
 

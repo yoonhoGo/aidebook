@@ -1,4 +1,4 @@
-//! Native OAuth handshakes for explicit GitHub/Jira connections. Secrets stay in Keychain.
+//! Native OAuth handshakes for explicit GitHub/Atlassian connections. Secrets stay in Keychain.
 use super::{
     github::authenticated_login,
     plugins::{self, AuthMethod, PluginConnection, Provider},
@@ -117,9 +117,11 @@ fn secret_key(id: &str) -> String {
     format!("plugin-oauth-secret-{id}")
 }
 pub fn set_client_secret(connection: &PluginConnection, secret: &str) -> CoreResult<()> {
-    if connection.provider != Provider::Jira || connection.auth != AuthMethod::Oauth {
+    if !matches!(connection.provider, Provider::Jira | Provider::Atlassian)
+        || connection.auth != AuthMethod::Oauth
+    {
         return Err(error(
-            "OAuth client secret applies to Jira OAuth connections",
+            "OAuth client secret applies to Atlassian OAuth connections",
         ));
     }
     if secret.is_empty() || secret.chars().any(char::is_control) {
@@ -174,38 +176,64 @@ fn token_from(value: &Value, cloud_id: Option<String>) -> CoreResult<StoredToken
         cloud_id,
     })
 }
-fn jira_site_id(connection: &PluginConnection, token: &str) -> CoreResult<String> {
+fn atlassian_scopes(connection: &PluginConnection) -> Vec<&'static str> {
+    let mut scopes = Vec::new();
+    if connection.reads_jira() {
+        scopes.push("read:jira-work");
+    }
+    if connection.reads_confluence() {
+        scopes.extend(["search:confluence", "read:confluence-content.all"]);
+    }
+    scopes
+}
+fn atlassian_site_id(connection: &PluginConnection, token: &str) -> CoreResult<String> {
     let sites = request(
         "https://api.atlassian.com/oauth/token/accessible-resources",
         None,
         Some(token),
     )?;
-    select_jira_site_id(connection, &sites)
+    select_atlassian_site_id(connection, &sites)
 }
-fn select_jira_site_id(connection: &PluginConnection, sites: &Value) -> CoreResult<String> {
-    let site = sites
+fn select_atlassian_site_id(connection: &PluginConnection, sites: &Value) -> CoreResult<String> {
+    let items = sites
         .as_array()
-        .and_then(|items| {
-            items.iter().find(|site| {
-                site["url"]
-                    .as_str()
-                    .is_some_and(|url| url.trim_end_matches('/') == connection.scope)
-                    && site["scopes"]
-                        .as_array()
-                        .is_some_and(|scopes| scopes.iter().any(|scope| scope == "read:jira-work"))
+        .ok_or_else(|| error("Atlassian sites are missing"))?;
+    let required = atlassian_scopes(connection);
+    for site in items {
+        if site["url"].as_str().map(|url| url.trim_end_matches('/'))
+            != Some(connection.scope.as_str())
+        {
+            continue;
+        }
+        let Some(id) = site["id"].as_str() else {
+            continue;
+        };
+        if uuid::Uuid::parse_str(id).is_err() {
+            continue;
+        }
+        let granted: Vec<&str> = items
+            .iter()
+            .filter(|item| {
+                item["id"] == id
+                    && item["url"].as_str().map(|url| url.trim_end_matches('/'))
+                        == Some(connection.scope.as_str())
             })
-        })
-        .ok_or_else(|| error("OAuth grant does not include this Jira site and read:jira-work"))?;
-    let id = site["id"]
-        .as_str()
-        .ok_or_else(|| error("Jira cloud ID is missing"))?;
-    uuid::Uuid::parse_str(id).map_err(|_| error("Jira cloud ID is invalid"))?;
-    Ok(id.to_string())
+            .filter_map(|item| item["scopes"].as_array())
+            .flatten()
+            .filter_map(Value::as_str)
+            .collect();
+        if required.iter().all(|scope| granted.contains(scope)) {
+            return Ok(id.to_string());
+        }
+    }
+    Err(error(
+        "OAuth grant does not include the selected Atlassian site and product read scopes",
+    ))
 }
 fn jira_secret(connection: &PluginConnection) -> CoreResult<String> {
     KeychainCredentialStore
         .get(&secret_key(&connection.id))?
-        .ok_or_else(|| error("save the Jira OAuth app client secret first"))
+        .ok_or_else(|| error("save the Atlassian OAuth app client secret first"))
 }
 fn refresh_token(connection: &PluginConnection, previous: &StoredToken) -> CoreResult<StoredToken> {
     let old = previous
@@ -216,7 +244,7 @@ fn refresh_token(connection: &PluginConnection, previous: &StoredToken) -> CoreR
         Provider::Github => request("https://github.com/login/oauth/access_token", Some(("application/x-www-form-urlencoded", form(&[
             ("client_id", &connection.oauth_client_id), ("grant_type", "refresh_token"), ("refresh_token", old)
         ]))), None)?,
-        Provider::Jira => request("https://auth.atlassian.com/oauth/token", Some(("application/json", json!({
+        Provider::Jira | Provider::Atlassian => request("https://auth.atlassian.com/oauth/token", Some(("application/json", json!({
             "grant_type":"refresh_token", "client_id":connection.oauth_client_id, "client_secret":jira_secret(connection)?, "refresh_token":old
         }).to_string())), None)?,
         _ => return Err(error("OAuth is unavailable for this provider")),
@@ -226,7 +254,8 @@ fn refresh_token(connection: &PluginConnection, previous: &StoredToken) -> CoreR
     }
     let next = token_from(&response, previous.cloud_id.clone())?;
     if next.refresh_token.is_none()
-        || (connection.provider == Provider::Jira && next.expires_at == 0)
+        || (matches!(connection.provider, Provider::Jira | Provider::Atlassian)
+            && next.expires_at == 0)
     {
         return Err(error(
             "OAuth refresh did not return a replacement refresh token; reconnect",
@@ -250,7 +279,7 @@ pub fn access_token(connection: &PluginConnection) -> CoreResult<String> {
 pub fn cloud_id(connection: &PluginConnection) -> CoreResult<String> {
     saved(&connection.id)?
         .cloud_id
-        .ok_or_else(|| error("Jira OAuth site selection is missing; reconnect"))
+        .ok_or_else(|| error("Atlassian OAuth site selection is missing; reconnect"))
 }
 #[derive(Debug, Clone, Serialize)]
 pub struct OAuthStart {
@@ -344,10 +373,10 @@ impl OAuthManager {
                     user_code: Some(user_code.into()),
                 })
             }
-            Provider::Jira => {
+            Provider::Jira | Provider::Atlassian => {
                 let secret = jira_secret(&connection)?;
                 if secret.is_empty() {
-                    return Err(error("Jira OAuth app client secret is missing"));
+                    return Err(error("Atlassian OAuth app client secret is missing"));
                 }
                 let listener = TcpListener::bind("127.0.0.1:48913")
                     .map_err(|_| error("OAuth callback port 48913 is unavailable"))?;
@@ -360,7 +389,10 @@ impl OAuthManager {
                 url.query_pairs_mut()
                     .append_pair("audience", "api.atlassian.com")
                     .append_pair("client_id", &connection.oauth_client_id)
-                    .append_pair("scope", "read:jira-work offline_access")
+                    .append_pair(
+                        "scope",
+                        &format!("{} offline_access", atlassian_scopes(&connection).join(" ")),
+                    )
                     .append_pair("redirect_uri", JIRA_CALLBACK)
                     .append_pair("state", &state)
                     .append_pair("response_type", "code")
@@ -521,7 +553,7 @@ fn jira_callback(
                         "Jira OAuth did not return a renewable session; check offline_access",
                     ));
                 }
-                token.cloud_id = Some(jira_site_id(connection, &token.access_token)?);
+                token.cloud_id = Some(atlassian_site_id(connection, &token.access_token)?);
                 store(&connection.id, &token)?;
                 return Ok(());
             }
@@ -560,11 +592,31 @@ mod tests {
             {"id":"11111111-1111-4111-8111-111111111111", "url":"https://other.atlassian.net", "scopes":["read:jira-work"]},
             {"id":"22222222-2222-4222-8222-222222222222", "url":"https://team.atlassian.net", "scopes":["write:jira-work"]}
         ]);
-        assert!(select_jira_site_id(&connection, &sites).is_err());
+        assert!(select_atlassian_site_id(&connection, &sites).is_err());
         let allowed = json!([{"id":"33333333-3333-4333-8333-333333333333", "url":"https://team.atlassian.net", "scopes":["read:jira-work"]}]);
         assert_eq!(
-            select_jira_site_id(&connection, &allowed).unwrap(),
+            select_atlassian_site_id(&connection, &allowed).unwrap(),
             "33333333-3333-4333-8333-333333333333"
+        );
+    }
+    #[test]
+    fn combined_grant_requires_both_product_scopes_on_the_same_site() {
+        let connection: PluginConnection = serde_json::from_value(json!({
+            "id":"shared", "provider":"atlassian", "label":"Team", "account":"personal",
+            "scope":"https://team.atlassian.net", "auth":"oauth", "oauth_client_id":"client",
+            "jira_enabled":true, "confluence_enabled":true, "jira_scope":"mine"
+        }))
+        .unwrap();
+        let id = "33333333-3333-4333-8333-333333333333";
+        let partial = json!([{"id":id, "url":"https://team.atlassian.net", "scopes":["read:jira-work", "search:confluence"]}]);
+        assert!(select_atlassian_site_id(&connection, &partial).is_err());
+        let complete = json!([
+            {"id":id, "url":"https://team.atlassian.net", "scopes":["read:jira-work"]},
+            {"id":id, "url":"https://team.atlassian.net", "scopes":["search:confluence", "read:confluence-content.all"]}
+        ]);
+        assert_eq!(
+            select_atlassian_site_id(&connection, &complete).unwrap(),
+            id
         );
     }
 }

@@ -3,6 +3,21 @@
 기준: `docs/ROADMAP.md`와 두 원문 기획 노트의 구체적인 MVP 설계를 우선했다.
 이 문서는 단계별 구현·검증 경계를 기록하며, native/live 경계는 별도로 표시한다.
 
+## 통합 Atlassian 연결·설정 내 인증 — 2026-09-23
+
+- 새 `atlassian` 연결에서 Jira·Confluence를 선택하고 각각의 읽기 범위를 설정한다.
+  API token 입력과 접근 확인, OAuth Client ID/secret 및 브라우저 승인 시작을
+  같은 연결 폼에서 진행한다. 기존 제품별 연결과 Keychain 항목은 보존한다.
+- OAuth는 선택한 제품의 scope와 사이트 cloudId를 확인하고 Confluence 읽기를
+  API gateway로 보낸다. 제품별 인증 확인 결과를 화면에 표시한다.
+- 새 연결의 제품 선택·기존 연결 보존 및 복수 scope 검증 Rust 테스트를 추가했다.
+  Rust 라이브러리 테스트 50개, frontend Vitest 12개, TypeScript/Vite build 및
+  Cargo bins check 통과. 실행 중인 native Tauri 화면에서 기존 Jira·Confluence가
+  Atlassian 그룹에 표시되고 새 연결 폼에 두 제품 선택·API token 입력이 있는 것을
+  접근성 트리와 화면으로 확인했다. 실제 Atlassian 인증·브라우저 callback·Keychain
+  쓰기·원격 자료 읽기는 검증하지 않았다. 브라우저 미리보기는 실제 인증을 수행하지 않는다.
+- 상세 계약: [PLUGIN_CONNECTIONS.md](PLUGIN_CONNECTIONS.md).
+
 ## 업무 자료 연결·가져오기·대시보드 — 2026-09-23
 
 - 서브에이전트 3개와 구현/검증 후 통합. jj `lunssuwp`, [상세 기록](WORKFLOW_W1B_W2_VALIDATION.md).

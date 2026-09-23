@@ -71,6 +71,8 @@ fn run_cli(args: &[String]) -> Result<Value, CoreError> {
                 "jira_include_parents":bool_flag(args,"--jira-include-parents")?.unwrap_or(false),
                 "confluence_mode":flag_value(args,"--confluence-mode").unwrap_or_else(|| "authored".into()),
                 "confluence_page_ids":flag_value(args,"--confluence-page-ids").map(|s| s.split(',').map(str::to_string).collect::<Vec<_>>()).unwrap_or_default(),
+                "jira_enabled":bool_flag(args,"--jira-enabled")?.unwrap_or(provider == "atlassian"),
+                "confluence_enabled":bool_flag(args,"--confluence-enabled")?.unwrap_or(provider == "atlassian"),
                 "auto_sync":bool_flag(args,"--auto-sync")?.unwrap_or(true)})
         }
         "plugins.update" => {
@@ -82,7 +84,7 @@ fn run_cli(args: &[String]) -> Result<Value, CoreError> {
             for key in ["jira_scope", "confluence_mode"] {
                 if let Some(value) = flag_value(args, &format!("--{}", key.replace('_', "-"))) { changes.insert(key.into(), json!(value)); }
             }
-            for key in ["jira_include_reporter", "jira_include_parents"] {
+            for key in ["jira_include_reporter", "jira_include_parents", "jira_enabled", "confluence_enabled"] {
                 if let Some(value) = bool_flag(args, &format!("--{}", key.replace('_', "-")))? { changes.insert(key.into(), json!(value)); }
             }
             if let Some(value) = flag_value(args, "--confluence-page-ids") {

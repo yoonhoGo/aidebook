@@ -4,8 +4,9 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import "./ConnectionsPanels.css";
 
-type Provider = "obsidian" | "github" | "jira" | "confluence";
-type Connection = { id: string; provider: Provider; label: string; account: string; scope: string; project: string; auth: "local" | "gh_cli" | "token" | "oauth"; oauth_client_id: string; auto_sync: boolean; jira_scope: "mine" | "project"; jira_include_reporter: boolean; jira_include_parents: boolean; confluence_mode: "authored" | "watched" | "selected"; confluence_page_ids: string[] };
+type Provider = "obsidian" | "github" | "jira" | "confluence" | "atlassian";
+type Connection = { id: string; provider: Provider; label: string; account: string; scope: string; project: string; auth: "local" | "gh_cli" | "token" | "oauth"; oauth_client_id: string; auto_sync: boolean; jira_scope: "mine" | "project"; jira_include_reporter: boolean; jira_include_parents: boolean; confluence_mode: "authored" | "watched" | "selected"; confluence_page_ids: string[]; jira_enabled: boolean; confluence_enabled: boolean };
+type AtlassianAuthCheck = { jira: string | null; confluence: string | null };
 type PageResult = { id: string; title: string; url: string };
 type SyncStatus = { id: string; running: boolean; last_checked_at: string | null; last_success_at: string | null; last_graph_at: string | null; indexed: number; inaccessible: number; changed: number; removed: number; error: string | null };
 function syncLabel(status?: SyncStatus) {
@@ -16,9 +17,14 @@ function syncLabel(status?: SyncStatus) {
   const graph = status.last_graph_at ? new Date(status.last_graph_at).toLocaleTimeString() : "—";
   return `${status.indexed}개 문서${status.inaccessible ? ` · 읽기 불가 ${status.inaccessible}개 (삭제 판정 보류)` : ""} · 변경 ${status.changed}개 · 삭제 ${status.removed}개 · 확인 ${checked} · 관계 갱신 ${graph}`;
 }
-const names = { obsidian: "Obsidian", github: "GitHub", jira: "Jira", confluence: "Confluence" };
-const order: Provider[] = ["obsidian", "github", "jira", "confluence"];
-const empty = (provider: Provider): Connection => ({ id: "", provider, label: "", account: "", scope: "", project: "", oauth_client_id: "", auto_sync: true, jira_scope: "mine", jira_include_reporter: false, jira_include_parents: true, confluence_mode: "authored", confluence_page_ids: [], auth: provider === "obsidian" ? "local" : provider === "github" ? "gh_cli" : "token" });
+const names = { obsidian: "Obsidian", github: "GitHub", jira: "Jira", confluence: "Confluence", atlassian: "Atlassian" };
+const order: Provider[] = ["obsidian", "github", "atlassian"];
+const empty = (provider: Provider): Connection => ({ id: "", provider, label: "", account: "", scope: "", project: "", oauth_client_id: "", auto_sync: true, jira_scope: "mine", jira_include_reporter: false, jira_include_parents: true, confluence_mode: "authored", confluence_page_ids: [], jira_enabled: provider === "atlassian", confluence_enabled: provider === "atlassian", auth: provider === "obsidian" ? "local" : provider === "github" ? "gh_cli" : "token" });
+const readsJira = (c: Connection) => c.provider === "jira" || (c.provider === "atlassian" && c.jira_enabled);
+const readsConfluence = (c: Connection) => c.provider === "confluence" || (c.provider === "atlassian" && c.confluence_enabled);
+const inGroup = (c: Connection, provider: Provider) => provider === "atlassian" ? ["atlassian", "jira", "confluence"].includes(c.provider) : c.provider === provider;
+const authSummary = (check: AtlassianAuthCheck) => [check.jira && `Jira ${check.jira === "connected" ? "연결됨" : check.jira}`, check.confluence && `Confluence ${check.confluence === "connected" ? "연결됨" : check.confluence}`].filter(Boolean).join(" · ");
+const allConnected = (check: AtlassianAuthCheck) => [check.jira, check.confluence].every(status => status === null || status === "connected");
 function legacyScopes(): Partial<Record<Provider, string>> {
   try {
     const value: unknown = JSON.parse(localStorage.getItem("aidebook-native-scopes-v1") ?? "{}");
@@ -42,9 +48,11 @@ export default function PluginsPanel() {
   const [message, setMessage] = useState("");
   const [syncStatuses, setSyncStatuses] = useState<Record<string, SyncStatus>>({});
   const [statuses, setStatuses] = useState<Record<string, string>>({});
+  const [authChecks, setAuthChecks] = useState<Record<string, AtlassianAuthCheck>>({});
   const [tokenId, setTokenId] = useState<string | null>(null);
   const [token, setToken] = useState("");
   const [oauthId, setOauthId] = useState<string | null>(null);
+  const [oauthAtlassian, setOauthAtlassian] = useState(false);
   const [oauthCode, setOauthCode] = useState<string | null>(null);
   const [secretId, setSecretId] = useState<string | null>(null);
   const [secret, setSecret] = useState("");
@@ -56,10 +64,10 @@ export default function PluginsPanel() {
   const native = isTauri();
   const [legacy] = useState(legacyScopes);
   const savedDraft = connections.find(c => c.id === draft.id);
-  const searchNeedsSave = !savedDraft || savedDraft.scope !== draft.scope.trim() || savedDraft.account !== draft.account.trim();
+  const searchNeedsSave = !savedDraft || savedDraft.scope !== draft.scope.trim() || savedDraft.account !== draft.account.trim() || (draft.provider === "atlassian" && savedDraft.confluence_enabled !== draft.confluence_enabled);
   function editConnection(connection: Connection) {
-    setDraft({ ...connection, jira_scope: connection.jira_scope ?? "project", jira_include_reporter: connection.jira_include_reporter ?? false, jira_include_parents: connection.jira_include_parents ?? false, confluence_mode: connection.confluence_mode ?? "authored", confluence_page_ids: connection.confluence_page_ids ?? [] });
-    setResults([]); setQuery(""); setPageInput(""); setMessage("");
+    setDraft({ ...connection, jira_scope: connection.jira_scope ?? "project", jira_include_reporter: connection.jira_include_reporter ?? false, jira_include_parents: connection.jira_include_parents ?? false, confluence_mode: connection.confluence_mode ?? "authored", confluence_page_ids: connection.confluence_page_ids ?? [], jira_enabled: connection.jira_enabled ?? false, confluence_enabled: connection.confluence_enabled ?? false });
+    setResults([]); setQuery(""); setPageInput(""); setToken(""); setSecret(""); setMessage("");
     requestAnimationFrame(() => {
       const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches || document.body.classList.contains("reduce-motion");
       formRef.current?.scrollIntoView({ block: "start", behavior: reducedMotion ? "auto" : "smooth" });
@@ -94,11 +102,20 @@ export default function PluginsPanel() {
         .then(result => {
           if (!active || result.status === "pending") return;
           setOauthId(null); setOauthCode(null);
-          setMessage(result.status === "complete" ? "OAuth 연결을 완료했습니다. 읽기 / 다시 확인을 실행하세요." : `OAuth 연결 실패 · ${result.message ?? "다시 시도하세요."}`);
+          if (result.status === "complete") {
+            if (oauthAtlassian) {
+              void checkAtlassian(oauthId).then(check => setMessage(`${authSummary(check)} · ${allConnected(check) ? "읽기 / 다시 확인을 실행하세요." : "제품별 접근을 확인하고 다시 인증하세요."}`)).catch(error => setMessage(`접근 확인 실패 · ${errorMessage(error)}`));
+            } else setMessage("OAuth 연결을 완료했습니다. 읽기 / 다시 확인을 실행하세요.");
+          } else setMessage(`OAuth 연결 실패 · ${result.message ?? "다시 시도하세요."}`);
         }).catch(error => { if (active) setMessage(`OAuth 확인 지연 · ${errorMessage(error)}`); });
     }, 2000);
     return () => { active = false; clearInterval(timer); };
-  }, [oauthId, native]);
+  }, [oauthId, native, oauthAtlassian]);
+  async function checkAtlassian(id: string) {
+    const check = await invoke<AtlassianAuthCheck>("plugin_atlassian_auth_check", { id });
+    setAuthChecks(previous => ({ ...previous, [id]: check }));
+    return check;
+  }
   async function toggleSync(connection: Connection) {
     if (!native) return;
     setBusy(true);
@@ -107,14 +124,31 @@ export default function PluginsPanel() {
   }
   async function add(event: FormEvent) {
     event.preventDefault(); if (!native) return; setBusy(true); setMessage("");
+    let savedConnectionId: string | null = null;
     try {
       const input = { ...draft, id: draft.id || crypto.randomUUID(), label: draft.label.trim() || names[draft.provider], account: draft.account.trim(), scope: draft.scope.trim(), project: draft.project.trim(), oauth_client_id: draft.oauth_client_id.trim() };
       const { id, provider: _provider, ...changes } = input;
       const saved = draft.id ? await invoke<Connection>("plugin_update", { id, changes }) : await invoke<Connection>("plugin_add", { input });
-      await load(); setDraft(saved.provider === "confluence" ? saved : empty(draft.provider));
-      if (!draft.id && saved.auth === "token") { setTokenId(saved.id); setToken(""); }
-      setMessage(saved.provider === "obsidian" ? "연결을 저장했습니다. 앱이 실행 중이면 10초 간격으로 문서와 관계를 자동 갱신합니다." : "연결 범위를 저장했습니다. 인증 정보를 설정한 뒤 읽기 / 다시 확인을 실행하세요. 검색과 범위 저장만으로 문서를 가져오지는 않습니다.");
-    } catch (error) { setMessage(errorMessage(error)); } finally { setBusy(false); }
+      savedConnectionId = saved.id;
+      await load(); setDraft(saved.provider === "atlassian" || saved.provider === "confluence" ? saved : empty(draft.provider));
+      if (saved.provider === "atlassian") {
+        if (saved.auth === "token") {
+          if (token) { await invoke("plugin_token_set", { id: saved.id, token }); setToken(""); }
+          const check = await checkAtlassian(saved.id);
+          setMessage(`${authSummary(check)} · ${allConnected(check) ? "범위를 저장했습니다. 읽기 / 다시 확인을 실행하면 자료를 가져옵니다." : "접근이 거부된 제품의 인증을 확인하세요."}`);
+        } else {
+          if (secret) { await invoke("plugin_oauth_secret_set", { id: saved.id, secret }); setSecret(""); }
+          await startOauth(saved.id);
+        }
+      } else {
+        if (!draft.id && saved.auth === "token") { setTokenId(saved.id); setToken(""); }
+        setMessage(saved.provider === "obsidian" ? "연결을 저장했습니다. 앱이 실행 중이면 10초 간격으로 문서와 관계를 자동 갱신합니다." : "연결 범위를 저장했습니다. 인증 정보를 설정한 뒤 읽기 / 다시 확인을 실행하세요. 검색과 범위 저장만으로 문서를 가져오지는 않습니다.");
+      }
+    } catch (error) {
+      const reason = errorMessage(error);
+      if (savedConnectionId && draft.provider === "atlassian") setStatuses(previous => ({ ...previous, [savedConnectionId!]: `인증 미완료 · ${reason}` }));
+      setMessage(reason);
+    } finally { setBusy(false); }
   }
   async function refresh(connection: Connection) {
     if (!native) return;
@@ -126,7 +160,7 @@ export default function PluginsPanel() {
   }
   async function refreshAll() {
     setBusy(true);
-    try { for (const provider of order) for (const c of connections.filter(c => c.provider === provider)) await refresh(c); }
+    try { for (const provider of order) for (const c of connections.filter(c => inGroup(c, provider))) await refresh(c); }
     finally { setBusy(false); }
   }
   async function saveToken(event: FormEvent) {
@@ -143,10 +177,11 @@ export default function PluginsPanel() {
     if (!native) return; setBusy(true); setMessage("");
     try {
       const result = await invoke<{ url: string; user_code: string | null }>("plugin_oauth_start", { id });
+      setOauthAtlassian((connections.find(c => c.id === id)?.provider ?? draft.provider) === "atlassian");
       setOauthId(id); setOauthCode(result.user_code);
       try {
         await openUrl(result.url);
-        setMessage(result.user_code ? "GitHub 화면에 아래 코드를 입력하세요. 승인 결과를 자동으로 확인합니다." : "브라우저에서 Jira 접근을 승인하세요. 완료 결과를 자동으로 확인합니다.");
+        setMessage(result.user_code ? "GitHub 화면에 아래 코드를 입력하세요. 승인 결과를 자동으로 확인합니다." : "브라우저에서 선택한 Atlassian 제품의 읽기 권한을 승인하세요. 완료 결과를 자동으로 확인합니다.");
       } catch { setMessage(`브라우저를 열지 못했습니다. 이 주소를 직접 여세요: ${result.url}`); }
     } catch (error) { setMessage(errorMessage(error)); }
     finally { setBusy(false); }
@@ -192,7 +227,7 @@ export default function PluginsPanel() {
         <div className="plugin-provider-heading">
           <div>
             <div className="plugin-provider-title"><h3 id={`plugin-provider-${provider}`}>{names[provider]}</h3><span className="tag">{provider === "obsidian" ? "로컬 우선 · 인증 불필요" : "읽기 전용"}</span></div>
-            <p className="plugin-provider-description">{provider === "obsidian" ? "명시적으로 추가한 볼트의 Markdown 문서" : provider === "github" ? "계정별 저장소의 이슈·PR·댓글" : provider === "jira" ? "보드·프로젝트에 관계없이 내가 생성하거나 담당하는 티켓과 상위 티켓" : "내가 작성하거나 Watch 중인 문서, 검색해서 선택한 문서"}</p>
+            <p className="plugin-provider-description">{provider === "obsidian" ? "명시적으로 추가한 볼트의 Markdown 문서" : provider === "github" ? "계정별 저장소의 이슈·PR·댓글" : "사이트와 계정 하나로 Jira 티켓과 Confluence 문서를 연결합니다."}</p>
           </div>
           <div className="plugin-provider-actions">
             <button type="button" className="btn btn-secondary" disabled={!native || busy} onClick={() => editConnection(empty(provider))}>{names[provider]} 연결 추가</button>
@@ -200,47 +235,50 @@ export default function PluginsPanel() {
           </div>
         </div>
         <div className="plugin-connection-list" role="list">
-          {connections.filter(c => c.provider === provider).map(c => <div className="plugin-connection-row" key={c.id} role="listitem" aria-labelledby={`plugin-connection-${c.id}`}>
+          {connections.filter(c => inGroup(c, provider)).map(c => <div className="plugin-connection-row" key={c.id} role="listitem" aria-labelledby={`plugin-connection-${c.id}`}>
             <div className="plugin-connection-copy">
-              <h4 id={`plugin-connection-${c.id}`}>{c.label}</h4>
-              <p>{c.account && `${c.account} · `}{c.scope}{c.provider === "jira" ? ` · ${c.jira_scope === "mine" ? "내 티켓" : c.project}${c.jira_include_parents ? " · 상위 티켓 포함" : ""}` : c.project && ` · ${c.project}`}{c.provider === "confluence" && ` · ${{ authored: "내가 작성", watched: "Watch 중", selected: "선택한 문서" }[c.confluence_mode ?? "authored"]}`}</p>
+              <h4 id={`plugin-connection-${c.id}`}>{c.label}{(c.provider === "jira" || c.provider === "confluence") && <span className="tag">기존 {names[c.provider]} 연결</span>}</h4>
+              <p>{c.account && `${c.account} · `}{c.scope}{readsJira(c) && ` · Jira: ${c.jira_scope === "mine" ? "내 티켓" : c.project}${c.jira_include_parents ? " · 상위 티켓 포함" : ""}`}{readsConfluence(c) && ` · Confluence: ${{ authored: "내가 작성", watched: "Watch 중", selected: "선택한 문서" }[c.confluence_mode ?? "authored"]}`}</p>
               <p className="plugin-connection-auth">{c.auth === "local" ? "로컬 경로" : c.auth === "gh_cli" ? "기존 GitHub CLI 인증 재사용" : c.auth === "oauth" ? "OAuth · 연결별 Keychain" : "API 토큰 · 연결별 Keychain"}</p>
+              {authChecks[c.id] && <p className="plugin-connection-auth">접근 확인 · {authSummary(authChecks[c.id])}</p>}
             </div>
             <p className="plugin-connection-status">{c.provider === "obsidian" ? (syncStatuses[c.id] ? syncLabel(syncStatuses[c.id]) : c.auto_sync ? "첫 자동 확인 대기 중" : "자동 갱신 꺼짐 · 수동 읽기 가능") : statuses[c.id] ?? "저장된 연결 · 이 화면에서 아직 확인하지 않음"}</p>
             {c.provider === "obsidian" && <label className="plugin-toggle-row" htmlFor={`auto-sync-${c.id}`}><input id={`auto-sync-${c.id}`} type="checkbox" checked={c.auto_sync} disabled={!native || busy} onChange={() => void toggleSync(c)} />자동 갱신 · 앱 실행 중 10초 간격 · 관계도 함께 반영</label>}
             <div className="plugin-connection-actions">
-              <button type="button" className="btn btn-ghost" disabled={!native || busy} aria-label={`${c.label} 연결 범위 수정`} onClick={() => editConnection(c)}>범위 수정</button>
+              <button type="button" className="btn btn-ghost" disabled={!native || busy} aria-label={`${c.label} 연결 설정 수정`} onClick={() => editConnection(c)}>연결 설정</button>
               <button type="button" className="btn btn-secondary" disabled={!native || busy} aria-label={`${c.label} 읽기 또는 다시 확인`} onClick={() => { setBusy(true); void refresh(c).finally(() => setBusy(false)); }}>읽기 / 다시 확인</button>
-              {c.auth === "token" && <button type="button" className="btn btn-ghost" disabled={!native || busy} aria-label={`${c.label} 인증 정보 설정`} onClick={() => { setToken(""); setTokenId(c.id); }}>인증 정보 설정</button>}
+              {c.auth === "token" && c.provider !== "atlassian" && <button type="button" className="btn btn-ghost" disabled={!native || busy} aria-label={`${c.label} 인증 정보 설정`} onClick={() => { setToken(""); setTokenId(c.id); }}>인증 정보 설정</button>}
               {c.auth === "oauth" && c.provider === "jira" && <button type="button" className="btn btn-ghost" disabled={!native || busy} aria-label={`${c.label} OAuth 앱 비밀키 설정`} onClick={() => { setSecret(""); setSecretId(c.id); }}>OAuth 앱 비밀키 설정</button>}
               {c.auth === "oauth" && <button type="button" className="btn btn-ghost" disabled={!native || busy || !!oauthId} aria-label={`${c.label} 브라우저 OAuth 연결`} onClick={() => void startOauth(c.id)}>브라우저 OAuth 연결</button>}
+              {c.provider === "atlassian" && <button type="button" className="btn btn-ghost" disabled={!native || busy} onClick={() => void checkAtlassian(c.id).then(check => setMessage(authSummary(check))).catch(error => setMessage(errorMessage(error)))}>제품별 접근 확인</button>}
               <button type="button" className="btn btn-ghost" disabled={!native || busy} aria-label={`${c.label} 연결 해제`} onClick={() => { setDeleteCredential(false); setRemoveId(c.id); }}>연결 해제</button>
             </div>
           </div>)}
         </div>
-        {!connections.some(c => c.provider === provider) && <p className="plugin-empty-state">아직 연결한 계정이나 경로가 없습니다.</p>}
+        {!connections.some(c => inGroup(c, provider)) && <p className="plugin-empty-state">아직 연결한 계정이나 경로가 없습니다.</p>}
       </article>)}
     </div>
     <form ref={formRef} className="card plugin-form" aria-labelledby="plugin-form-title" onSubmit={add}>
       <h2 id="plugin-form-title">{names[draft.provider]} 연결 {draft.id ? "수정" : "추가"}</h2>
-      <label>플러그인<select value={draft.provider} disabled={!native || busy || !!draft.id} onChange={e => setDraft(empty(e.target.value as Provider))}>{order.map(p => <option key={p} value={p}>{names[p]}</option>)}</select></label>
+      <label>플러그인<select value={draft.provider} disabled={!native || busy || !!draft.id} onChange={e => setDraft(empty(e.target.value as Provider))}>{order.map(p => <option key={p} value={p}>{names[p]}</option>)}{(draft.provider === "jira" || draft.provider === "confluence") && <option value={draft.provider}>{names[draft.provider]} (기존 연결)</option>}</select></label>
       <label>연결 이름<input value={draft.label} onChange={e => setDraft({ ...draft, label: e.target.value })} placeholder="개인 / 회사 / 연구 노트" /></label>
       {draft.provider !== "obsidian" && <label>{draft.provider === "github" ? "GitHub 로그인 계정 (저장소 소유자와 별개)" : draft.auth === "oauth" ? "Atlassian 계정 구분 이름" : "Atlassian 계정 이메일"}<input required value={draft.account} disabled={busy} onChange={e => { setDraft({ ...draft, account: e.target.value }); setResults([]); }} /></label>}
       <label>{draft.provider === "obsidian" ? "볼트 절대 경로" : draft.provider === "github" ? "저장소 owner/repository" : "Atlassian Cloud 사이트"}<input required value={draft.scope} disabled={busy} onChange={e => { setDraft({ ...draft, scope: e.target.value }); setResults([]); }} placeholder={draft.provider === "obsidian" ? "/Users/me/Notes" : draft.provider === "github" ? "team/project" : "https://team.atlassian.net"} /></label>
-      {draft.provider === "jira" && <>
+      {draft.provider === "atlassian" && <fieldset className="plugin-product-fields"><legend>읽을 제품</legend><label className="plugin-check-row"><input type="checkbox" checked={draft.jira_enabled} onChange={e => setDraft({ ...draft, jira_enabled: e.target.checked })} />Jira 티켓</label><label className="plugin-check-row"><input type="checkbox" checked={draft.confluence_enabled} onChange={e => setDraft({ ...draft, confluence_enabled: e.target.checked })} />Confluence 문서</label></fieldset>}
+      {readsJira(draft) && <>
         <label>가져올 티켓<select value={draft.jira_scope} onChange={e => setDraft({ ...draft, jira_scope: e.target.value as Connection["jira_scope"] })}><option value="mine">내가 생성하거나 담당하는 티켓 · 모든 프로젝트</option><option value="project">특정 프로젝트</option></select></label>
         {draft.jira_scope === "project" && <label>프로젝트 키<input required value={draft.project} onChange={e => setDraft({ ...draft, project: e.target.value })} placeholder="PROJ" /></label>}
         {draft.jira_scope === "mine" && <label className="plugin-check-row"><input type="checkbox" checked={draft.jira_include_reporter} onChange={e => setDraft({ ...draft, jira_include_reporter: e.target.checked })} />내가 보고자인 티켓도 포함</label>}
         <label className="plugin-check-row"><input type="checkbox" checked={draft.jira_include_parents} onChange={e => setDraft({ ...draft, jira_include_parents: e.target.checked })} />상위 티켓도 함께 가져오기</label>
         <p className="small muted">연결한 계정에 조회 권한이 있는 티켓만 읽습니다. 상위 티켓은 부모 관계를 따르며 일반 관련 링크와는 구분됩니다.</p>
       </>}
-      {draft.provider === "confluence" && <>
+      {readsConfluence(draft) && <>
         <label>가져올 문서<select value={draft.confluence_mode} onChange={e => setDraft({ ...draft, confluence_mode: e.target.value as Connection["confluence_mode"] })}><option value="authored">내가 작성한 문서</option><option value="watched">내가 Watch 중인 문서</option><option value="selected">검색 / URL로 선택한 문서</option></select></label>
         <p className="small muted">Watch는 Confluence에서 지켜보기로 설정한 문서입니다. 최근 열람 목록은 포함하지 않습니다.</p>
         {draft.confluence_mode === "selected" && <>
           <label>문서 검색<input value={query} onChange={e => setQuery(e.target.value)} placeholder="제목 또는 본문 검색어" /></label>
           <div className="plugin-form-actions"><button type="button" className="btn btn-secondary" disabled={!native || busy || searchNeedsSave || !query.trim()} onClick={() => void searchPages()}>저장된 연결로 검색</button></div>
-          <p className="small muted">먼저 사이트와 계정을 저장하고 인증 정보를 설정하세요. 사이트나 계정을 변경하면 저장 후 검색할 수 있습니다. 검색만으로 문서를 가져오지는 않습니다.</p>
+          <p className="small muted">연결 설정과 인증을 완료한 뒤 검색할 수 있습니다. 검색만으로 문서를 가져오지는 않습니다.</p>
           {results.map(page => <label className="plugin-page-result" key={page.id}><input type="checkbox" checked={draft.confluence_page_ids.includes(page.id)} onChange={e => selectPage(page.id, e.target.checked)} /><span>{page.title} · {page.id}<span className="small muted">{page.url}</span></span></label>)}
           <label>페이지 ID 또는 같은 사이트의 페이지 URL<input value={pageInput} onChange={e => setPageInput(e.target.value)} placeholder="123456 또는 https://team.atlassian.net/wiki/spaces/TEAM/pages/123456" /></label>
           <div className="plugin-form-actions"><button type="button" className="btn btn-secondary" disabled={!native || busy || !pageInput.trim()} onClick={addPage}>선택 목록에 추가</button></div>
@@ -248,10 +286,12 @@ export default function PluginsPanel() {
           {draft.confluence_page_ids.map(id => <div key={id} className="plugin-page-selection"><span>{results.find(page => page.id === id)?.title ?? `페이지 ${id}`}</span><button type="button" className="btn btn-ghost" disabled={!native || busy} onClick={() => selectPage(id, false)}>선택 해제</button></div>)}
         </>}
       </>}
-      {(draft.provider === "github" || draft.provider === "jira") && <label>인증 방식<select value={draft.auth} onChange={e => setDraft({ ...draft, auth: e.target.value as Connection["auth"] })}>{draft.provider === "github" && <option value="gh_cli">기존 gh 로그인 사용</option>}<option value="token">API 키 / Personal access token</option><option value="oauth">OAuth</option></select></label>}
+      {(draft.provider === "github" || draft.provider === "jira" || draft.provider === "atlassian") && <label>인증 방식<select value={draft.auth} onChange={e => setDraft({ ...draft, auth: e.target.value as Connection["auth"] })}>{draft.provider === "github" && <option value="gh_cli">기존 gh 로그인 사용</option>}<option value="token">API token</option><option value="oauth">OAuth</option></select></label>}
       {draft.auth === "oauth" && <label>OAuth 앱 Client ID<input required value={draft.oauth_client_id} onChange={e => setDraft({ ...draft, oauth_client_id: e.target.value })} placeholder="등록한 앱의 Client ID" /></label>}
-      <p className="small muted">{draft.provider === "obsidian" ? "앱 실행 중 선택한 경로를 10초 간격으로 확인하고 문서와 관계를 자동 갱신합니다. 원본 파일은 수정하지 않습니다." : draft.provider === "github" ? draft.auth === "oauth" ? "Device flow를 켠 GitHub App의 Client ID를 입력하세요. GitHub에서 앱에 허용한 저장소 권한이 적용됩니다." : "기존 gh 로그인 또는 저장소 읽기 권한의 fine-grained PAT를 사용할 수 있습니다." : draft.provider === "jira" ? draft.auth === "oauth" ? "Jira 3LO 앱의 callback URL은 http://127.0.0.1:48913/aidebook/oauth 입니다. read:jira-work와 offline_access를 설정하고 저장 후 앱 비밀키를 Keychain에 등록하세요." : "개인용 Jira Cloud 연결은 계정 이메일과 API token을 사용합니다." : "Confluence는 계정 이메일과 API token을 사용합니다."}</p>
-      <div className="plugin-form-actions"><button className="btn btn-primary" disabled={!native || busy}>연결 범위 저장</button>{draft.id && <button type="button" className="btn btn-ghost" disabled={busy} onClick={() => editConnection(empty(draft.provider))}>수정 닫기</button>}</div>
+      {draft.provider === "atlassian" && draft.auth === "token" && <label>Atlassian API token<input type="password" autoComplete="new-password" required={!draft.id || savedDraft?.auth !== "token"} value={token} onChange={e => setToken(e.target.value)} placeholder={draft.id ? "기존 토큰을 유지하려면 비워 두세요" : "연결 확인 후 Keychain에 저장"} /></label>}
+      {draft.provider === "atlassian" && draft.auth === "oauth" && <label>OAuth 앱 Client secret<input type="password" autoComplete="new-password" required={!draft.id || savedDraft?.auth !== "oauth"} value={secret} onChange={e => setSecret(e.target.value)} placeholder={draft.id ? "기존 비밀키를 유지하려면 비워 두세요" : "Keychain에 저장"} /></label>}
+      <p className="small muted">{draft.provider === "obsidian" ? "앱 실행 중 선택한 경로를 10초 간격으로 확인하고 문서와 관계를 자동 갱신합니다. 원본 파일은 수정하지 않습니다." : draft.provider === "github" ? draft.auth === "oauth" ? "Device flow를 켠 GitHub App의 Client ID를 입력하세요. GitHub에서 앱에 허용한 저장소 권한이 적용됩니다." : "기존 gh 로그인 또는 저장소 읽기 권한의 fine-grained PAT를 사용할 수 있습니다." : draft.provider === "atlassian" ? draft.auth === "oauth" ? "선택한 제품의 읽기 scope와 offline_access를 3LO 앱에 추가하세요. Callback URL: http://127.0.0.1:48913/aidebook/oauth. 저장하면 브라우저 인증이 시작됩니다." : "이메일과 API token으로 선택한 제품의 접근을 확인한 뒤 Keychain에 저장합니다. 문서는 읽기 / 다시 확인을 실행할 때 가져옵니다." : draft.provider === "jira" && draft.auth === "oauth" ? "Jira 3LO 앱의 callback URL은 http://127.0.0.1:48913/aidebook/oauth 입니다." : "기존 연결의 인증 방식과 범위를 유지합니다."}</p>
+      <div className="plugin-form-actions"><button className="btn btn-primary" disabled={!native || busy || (draft.provider === "atlassian" && !draft.jira_enabled && !draft.confluence_enabled)}>{draft.provider === "atlassian" ? "연결 저장하고 인증" : "연결 범위 저장"}</button>{draft.id && <button type="button" className="btn btn-ghost" disabled={busy} onClick={() => editConnection(empty(draft.provider === "jira" || draft.provider === "confluence" ? "atlassian" : draft.provider))}>수정 닫기</button>}</div>
     </form>
     {tokenId && <form className="card plugin-token-form plugin-form" aria-labelledby="plugin-token-title" onSubmit={saveToken}>
       <h2 id="plugin-token-title">{connections.find(c => c.id === tokenId)?.label} 인증 정보</h2>

@@ -20,6 +20,7 @@ pub enum Provider {
     Github,
     Jira,
     Confluence,
+    Atlassian,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -65,6 +66,10 @@ pub struct PluginConnection {
     pub confluence_mode: ConfluenceMode,
     #[serde(default)]
     pub confluence_page_ids: Vec<String>,
+    #[serde(default)]
+    pub jira_enabled: bool,
+    #[serde(default)]
+    pub confluence_enabled: bool,
     pub auth: AuthMethod,
     #[serde(default)]
     pub oauth_client_id: String,
@@ -84,6 +89,8 @@ pub struct ConnectionPatch {
     pub jira_include_parents: Option<bool>,
     pub confluence_mode: Option<ConfluenceMode>,
     pub confluence_page_ids: Option<Vec<String>>,
+    pub jira_enabled: Option<bool>,
+    pub confluence_enabled: Option<bool>,
     pub auth: Option<AuthMethod>,
     pub oauth_client_id: Option<String>,
     pub auto_sync: Option<bool>,
@@ -108,6 +115,14 @@ fn segment(s: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
 }
 impl PluginConnection {
+    pub fn reads_jira(&self) -> bool {
+        self.provider == Provider::Jira
+            || (self.provider == Provider::Atlassian && self.jira_enabled)
+    }
+    pub fn reads_confluence(&self) -> bool {
+        self.provider == Provider::Confluence
+            || (self.provider == Provider::Atlassian && self.confluence_enabled)
+    }
     pub fn validate(&mut self) -> CoreResult<()> {
         self.validate_scope(true)
     }
@@ -143,7 +158,7 @@ impl PluginConnection {
                     .ok_or_else(|| invalid("use owner/repository"))?;
                 GitHubConfig::new(&self.account, &self.id, owner, repo).validate()?;
             }
-            Provider::Jira | Provider::Confluence => {
+            Provider::Jira | Provider::Confluence | Provider::Atlassian => {
                 self.scope = self.scope.trim_end_matches('/').into();
                 let tenant = self
                     .scope
@@ -168,7 +183,15 @@ impl PluginConnection {
                 if self.provider == Provider::Confluence && self.auth != AuthMethod::Token {
                     return Err(invalid("Confluence currently requires an API token"));
                 }
-                if self.provider == Provider::Jira
+                if self.provider == Provider::Atlassian
+                    && !self.jira_enabled
+                    && !self.confluence_enabled
+                {
+                    return Err(invalid(
+                        "select Jira or Confluence for this Atlassian connection",
+                    ));
+                }
+                if self.reads_jira()
                     && self.jira_scope == JiraScope::Project
                     && (self.project.is_empty()
                         || !self
@@ -178,7 +201,7 @@ impl PluginConnection {
                 {
                     return Err(invalid("enter an uppercase Jira project key"));
                 }
-                if self.provider == Provider::Confluence {
+                if self.reads_confluence() {
                     if self.confluence_page_ids.len() > 1000 {
                         return Err(invalid("select at most 1000 Confluence pages"));
                     }
@@ -223,6 +246,7 @@ impl PluginRegistry {
             Provider::Github => 1,
             Provider::Jira => 2,
             Provider::Confluence => 3,
+            Provider::Atlassian => 2,
         });
         result
     }
@@ -272,6 +296,12 @@ impl PluginRegistry {
         }
         if let Some(value) = patch.confluence_page_ids {
             connection.confluence_page_ids = value;
+        }
+        if let Some(value) = patch.jira_enabled {
+            connection.jira_enabled = value;
+        }
+        if let Some(value) = patch.confluence_enabled {
+            connection.confluence_enabled = value;
         }
         if let Some(value) = patch.auth {
             connection.auth = value;
@@ -332,7 +362,68 @@ pub fn set_token(connection: &PluginConnection, token: &str) -> CoreResult<()> {
     if token.trim().is_empty() || token.chars().any(char::is_control) {
         return Err(invalid("token is empty or contains control characters"));
     }
+    if connection.provider == Provider::Atlassian {
+        let check = check_atlassian_with(connection, token);
+        if !check.is_connected() {
+            return Err(failed(&check.summary()));
+        }
+    }
     KeychainCredentialStore.set(&credential_key(&connection.id), token)
+}
+#[derive(Debug, Clone, Serialize)]
+pub struct AtlassianAuthCheck {
+    pub jira: Option<String>,
+    pub confluence: Option<String>,
+}
+impl AtlassianAuthCheck {
+    fn is_connected(&self) -> bool {
+        self.jira
+            .as_deref()
+            .is_none_or(|status| status == "connected")
+            && self
+                .confluence
+                .as_deref()
+                .is_none_or(|status| status == "connected")
+    }
+    fn summary(&self) -> String {
+        [
+            self.jira.as_ref().map(|s| format!("Jira: {s}")),
+            self.confluence.as_ref().map(|s| format!("Confluence: {s}")),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join("; ")
+    }
+}
+fn check_atlassian_with(connection: &PluginConnection, credential: &str) -> AtlassianAuthCheck {
+    let jira = connection.reads_jira().then(|| {
+        match jira_request(
+            connection,
+            credential,
+            &json!({"jql":"order by updated DESC", "maxResults":1, "fields":["summary"]}),
+        ) {
+            Ok(value) if value["issues"].is_array() => "connected".into(),
+            Ok(_) => "issue search response is incomplete".into(),
+            Err(error) => error.to_string(),
+        }
+    });
+    let confluence =
+        connection.reads_confluence().then(|| {
+            match super::confluence::verify_access(connection, credential) {
+                Ok(()) => "connected".into(),
+                Err(error) => error.to_string(),
+            }
+        });
+    AtlassianAuthCheck { jira, confluence }
+}
+pub fn check_atlassian_auth(connection: &PluginConnection) -> CoreResult<AtlassianAuthCheck> {
+    if connection.provider != Provider::Atlassian {
+        return Err(invalid("select an Atlassian connection"));
+    }
+    let mut connection = connection.clone();
+    connection.validate()?;
+    Ok(check_atlassian_with(&connection, &token(&connection)?))
 }
 pub(super) fn token(connection: &PluginConnection) -> CoreResult<String> {
     if connection.auth == AuthMethod::Oauth {
@@ -383,6 +474,7 @@ pub fn refresh(core: &Core, connection: PluginConnection) -> CoreResult<SourcesR
             Provider::Github => "github",
             Provider::Jira => "jira",
             Provider::Confluence => "confluence",
+            Provider::Atlassian => "atlassian",
         };
         let _ = core.record_sync_failure(
             &connection.id,
@@ -430,6 +522,55 @@ fn refresh_inner(
         Provider::Jira => core.sources_refresh(&JiraConnector { connection }),
         Provider::Confluence => {
             core.sources_refresh(&super::confluence::ConfluenceConnector::new(connection))
+        }
+        Provider::Atlassian => {
+            let jira = if connection.jira_enabled {
+                Some(core.sources_refresh(&JiraConnector {
+                    connection: connection.clone(),
+                }))
+            } else {
+                None
+            };
+            let confluence = if connection.confluence_enabled {
+                Some(
+                    core.sources_refresh(&super::confluence::ConfluenceConnector::new(
+                        connection.clone(),
+                    )),
+                )
+            } else {
+                None
+            };
+            let mut success: Option<SourcesRefreshResult> = None;
+            let mut failures = Vec::new();
+            for (name, outcome) in [("Jira", jira), ("Confluence", confluence)] {
+                match outcome {
+                    Some(Ok(result)) => {
+                        if let Some(combined) = &mut success {
+                            combined.attempted += result.attempted;
+                            combined.indexed += result.indexed;
+                            combined.deduplicated += result.deduplicated;
+                            combined.inaccessible += result.inaccessible;
+                        } else {
+                            success = Some(result);
+                        }
+                    }
+                    Some(Err(error)) => failures.push(format!("{name}: {error}")),
+                    None => (),
+                }
+            }
+            if !failures.is_empty() {
+                return Err(failed(&failures.join("; ")));
+            }
+            let mut result = success.ok_or_else(|| invalid("select an Atlassian product"))?;
+            result.provider = "atlassian".into();
+            result.sync_state = core.record_sync_success(
+                &connection.id,
+                "atlassian",
+                &connection.scope,
+                None,
+                Some(result.completed_at.clone()),
+            )?;
+            Ok(result)
         }
     }
 }
@@ -745,6 +886,8 @@ mod tests {
             jira_include_parents: false,
             confluence_mode: ConfluenceMode::Authored,
             confluence_page_ids: vec![],
+            jira_enabled: false,
+            confluence_enabled: false,
             auto_sync: true,
             auth: if local {
                 AuthMethod::Local
@@ -767,6 +910,49 @@ mod tests {
         assert!(!jira_jql(&c).contains("reporter"));
         c.jira_include_reporter = true;
         assert!(jira_jql(&c).contains("reporter = currentUser()"));
+    }
+    #[test]
+    fn shared_atlassian_connection_preserves_legacy_entries_and_product_choices() {
+        let legacy_jira: PluginConnection = serde_json::from_value(json!({
+            "id":"old-jira", "provider":"jira", "label":"Old Jira", "account":"me@example.com",
+            "scope":"https://team.atlassian.net", "project":"TEST", "auth":"token"
+        }))
+        .unwrap();
+        let legacy_confluence: PluginConnection = serde_json::from_value(json!({
+            "id":"old-docs", "provider":"confluence", "label":"Old Docs", "account":"me@example.com",
+            "scope":"https://team.atlassian.net", "auth":"token"
+        })).unwrap();
+        assert!(legacy_jira.reads_jira() && !legacy_jira.reads_confluence());
+        assert!(!legacy_confluence.reads_jira() && legacy_confluence.reads_confluence());
+        let root = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        fs::create_dir(&root).unwrap();
+        let path = root.join("connections.json");
+        let mut registry = PluginRegistry::open(path.clone()).unwrap();
+        registry.add(legacy_jira).unwrap();
+        registry.add(legacy_confluence).unwrap();
+        let mut shared = connection("shared", Provider::Atlassian, "https://team.atlassian.net");
+        shared.jira_scope = JiraScope::Mine;
+        shared.jira_enabled = true;
+        shared.confluence_enabled = true;
+        registry.add(shared).unwrap();
+        let mut reopened = PluginRegistry::open(path).unwrap();
+        assert_eq!(reopened.list().len(), 3);
+        reopened
+            .update(
+                "shared",
+                serde_json::from_value(json!({"confluence_enabled":false})).unwrap(),
+            )
+            .unwrap();
+        let selected = reopened.get("shared").unwrap();
+        assert!(selected.reads_jira() && !selected.reads_confluence());
+        assert!(reopened.get("old-jira").is_ok() && reopened.get("old-docs").is_ok());
+        assert!(reopened
+            .update(
+                "shared",
+                serde_json::from_value(json!({"jira_enabled":false})).unwrap()
+            )
+            .is_err());
+        fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn oauth_requires_client_id_only_for_supported_providers() {

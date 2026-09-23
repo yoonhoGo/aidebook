@@ -39,7 +39,7 @@ struct JsonRpcError {
 fn connection_properties() -> Value {
     json!({
         "id":{"type":"string","description":"Stable unique connection ID; use a new ID to add another vault/account."},
-        "provider":{"type":"string","enum":["obsidian","github","jira","confluence"]},
+        "provider":{"type":"string","enum":["obsidian","github","atlassian","jira","confluence"]},
         "label":{"type":"string"},
         "account":{"type":"string","description":"Empty for Obsidian, GitHub login or Atlassian email."},
         "scope":{"type":"string","description":"Absolute vault path, owner/repository, or https://tenant.atlassian.net."},
@@ -49,8 +49,10 @@ fn connection_properties() -> Value {
         "jira_include_parents":{"type":"boolean"},
         "confluence_mode":{"type":"string","enum":["authored","watched","selected"]},
         "confluence_page_ids":{"type":"array","items":{"type":"string"}},
+        "jira_enabled":{"type":"boolean","description":"For a shared Atlassian connection, read Jira issues."},
+        "confluence_enabled":{"type":"boolean","description":"For a shared Atlassian connection, read Confluence pages."},
         "auth":{"type":"string","enum":["local","gh_cli","token","oauth"]},
-        "oauth_client_id":{"type":"string","description":"Client ID for a GitHub device-flow app or Jira 3LO app; credentials are configured in the desktop app."},
+        "oauth_client_id":{"type":"string","description":"Client ID for a GitHub device-flow app or Atlassian 3LO app; credentials are configured in the desktop app."},
         "auto_sync":{"type":"boolean","default":true,"description":"Automatic refresh applies to local Obsidian vaults only."}
     })
 }
@@ -65,7 +67,7 @@ pub fn tool_descriptors() -> Vec<Value> {
         .map(|name| {
             let (description, properties, required) = match *name {
                 "plugins.list" => (
-                    "List saved Aidebook source connections (Obsidian, GitHub, Jira, Confluence), without credentials.",
+                    "List saved Aidebook source connections (Obsidian, GitHub, Atlassian and legacy Jira/Confluence), without credentials.",
                     json!({}), Vec::new(),
                 ),
                 "plugins.get" => (

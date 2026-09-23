@@ -1,6 +1,6 @@
 //! Read-only Confluence Cloud pages. Search does not import content.
 use super::{
-    plugins::{self, ConfluenceMode, PluginConnection, Provider},
+    plugins::{self, AuthMethod, ConfluenceMode, PluginConnection},
     types::*,
     ReadOnlyConnector,
 };
@@ -212,7 +212,7 @@ pub fn search(
 ) -> CoreResult<Vec<ConfluenceSearchResult>> {
     let mut c = connection.clone();
     c.validate()?;
-    if c.provider != Provider::Confluence {
+    if !c.reads_confluence() {
         return Err(invalid("select a Confluence connection"));
     }
     let query = query.trim();
@@ -225,6 +225,17 @@ pub fn search(
         &format!("type = page AND text ~ {}", cql_literal(query)),
         &mut |path| request(&c, &token, path),
     )
+}
+pub fn verify_access(connection: &PluginConnection, token: &str) -> CoreResult<()> {
+    let path = format!(
+        "/wiki/rest/api/search?cql={}&limit=1",
+        encode("type = page")
+    );
+    let result = request(connection, token, &path)?;
+    if !result["results"].is_array() {
+        return Err(failed("Confluence search response is incomplete"));
+    }
+    Ok(())
 }
 fn list_with(
     c: &PluginConnection,
@@ -397,7 +408,23 @@ fn request(c: &PluginConnection, token: &str, path: &str) -> CoreResult<Value> {
     {
         return Err(invalid("invalid Confluence request"));
     }
-    let config = format!("url = {}\nuser = {}\nheader = \"Accept: application/json\"\nwrite-out = \"\\nAIDEBOOK_STATUS:%{{http_code}}\"\n", quote(&format!("{}{path}", c.scope)), quote(&format!("{}:{token}", c.account)));
+    let url = if c.auth == AuthMethod::Oauth {
+        format!(
+            "https://api.atlassian.com/ex/confluence/{}{path}",
+            super::oauth::cloud_id(c)?
+        )
+    } else {
+        format!("{}{path}", c.scope)
+    };
+    let authorization = if c.auth == AuthMethod::Oauth {
+        format!(
+            "header = {}\n",
+            quote(&format!("Authorization: Bearer {token}"))
+        )
+    } else {
+        format!("user = {}\n", quote(&format!("{}:{token}", c.account)))
+    };
+    let config = format!("url = {}\n{}header = \"Accept: application/json\"\nwrite-out = \"\\nAIDEBOOK_STATUS:%{{http_code}}\"\n", quote(&url), authorization);
     let mut child = Command::new("curl")
         .args([
             "-q",

@@ -190,7 +190,7 @@ async fn plugin_sync_configure(
         .map_err(|_| plugin_lock_error())?
 }
 #[tauri::command]
-fn plugin_token_set(
+async fn plugin_token_set(
     id: String,
     token: String,
     state: State<'_, AppState>,
@@ -200,7 +200,23 @@ fn plugin_token_set(
         .lock()
         .map_err(|_| plugin_lock_error())?
         .get(&id)?;
-    core::plugins::set_token(&connection, &token)
+    tauri::async_runtime::spawn_blocking(move || core::plugins::set_token(&connection, &token))
+        .await
+        .map_err(|_| plugin_lock_error())?
+}
+#[tauri::command]
+async fn plugin_atlassian_auth_check(
+    id: String,
+    state: State<'_, AppState>,
+) -> Result<core::plugins::AtlassianAuthCheck, CoreError> {
+    let connection = state
+        .plugins
+        .lock()
+        .map_err(|_| plugin_lock_error())?
+        .get(&id)?;
+    tauri::async_runtime::spawn_blocking(move || core::plugins::check_atlassian_auth(&connection))
+        .await
+        .map_err(|_| plugin_lock_error())?
 }
 #[tauri::command]
 fn plugin_oauth_secret_set(
@@ -790,6 +806,7 @@ pub fn run() {
             plugin_update,
             plugin_remove,
             plugin_token_set,
+            plugin_atlassian_auth_check,
             plugin_oauth_secret_set,
             plugin_oauth_start,
             plugin_oauth_status,

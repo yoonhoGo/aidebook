@@ -289,6 +289,17 @@
   cursor: pointer;
 }
 
+.plugin-page .plugin-product-fields {
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  padding: 10px 14px;
+}
+
+.plugin-page .plugin-product-fields legend {
+  padding: 0 5px;
+  font-weight: 650;
+}
+
 .plugin-page .plugin-form .plugin-page-result {
   padding: 8px 10px;
   border: 1px solid var(--border-light);
